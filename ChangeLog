@@ -1,6 +1,5 @@
-
-
-
+* d1581b0 - (HEAD -> main) Added hash library that was available in didawiki: author Jakub Kurzak and utils functions and header from professor Massimo Torquati file  <lesi-nedo>
+* fdda6eb - (origin/master) initialising the project  <nedo1993>
 
 *   52d70b3 - (HEAD -> main, tag: v0.1, origin/main) Merge branch 'main' of https://github.com/nedo1993/another_brick_in_the_wall into main  <lesi-nedo>
 |\  

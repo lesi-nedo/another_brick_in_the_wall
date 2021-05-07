@@ -1,3 +1,12 @@
+* 5ce0f79 - (HEAD -> main) added the ability to parse conf.txt file but still miss the option SOCKET_Name. Remeber every time that is added new functionality DO NOT FORGET TO UPDATE BASE_HASH, max_num_avail_settings, all_settings and the function init_settings_arr. EVERYTHING IS BASED ON THE VALUE HASED.  <lesi-nedo>
+* 81d30ea - (origin/main) updating ChageLog file  <lesi-nedo>
+* 554333c - Added hash library that was available in didawiki: author Jakub Kurzak and utils functions and header from professor Massimo Torquati file  <lesi-nedo>
+*   52d70b3 - (tag: v0.1) Merge branch 'main' of https://github.com/nedo1993/another_brick_in_the_wall into main  <lesi-nedo>
+|\  
+| * ed7c03c - Update README.md  <Oleksiy>
+| * ca23aae - Initial commit  <Oleksiy>
+* fdda6eb - (origin/master) initialising the project  <nedo1993>
+
 * d1581b0 - (HEAD -> main) Added hash library that was available in didawiki: author Jakub Kurzak and utils functions and header from professor Massimo Torquati file  <lesi-nedo>
 * fdda6eb - (origin/master) initialising the project  <nedo1993>
 

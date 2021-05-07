@@ -1,3 +1,4 @@
+#This is a comment
 #IMPORTANT: REMEMBER TO UPDATE "num_avail_settings, BASE_MOD,
 #available_settings" if you add a valid configuration name.
 #Number of active threads serving connections

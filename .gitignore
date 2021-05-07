@@ -1,3 +1,5 @@
 add_changes.sh
 **/temp/*
 **/tmp/*
+**/*.json
+.vscode

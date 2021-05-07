@@ -62,6 +62,7 @@
 	exit(errno_copy);			\
     }
 
+
 /**
  * \brief Procedura di utilita' per la stampa degli errori
  *

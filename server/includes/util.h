@@ -23,7 +23,7 @@
 
 #define SYSCALL_EXIT(name, r, sc, str, ...)	\
     if ((r=sc) == -1) {				\
-	perror(#name);				\
+	perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	exit(errno_copy);			\
@@ -31,7 +31,7 @@
 
 #define SYSCALL_PRINT(name, r, sc, str, ...)	\
     if ((r=sc) == -1) {				\
-	perror(#name);				\
+	perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	errno = errno_copy;			\
@@ -39,7 +39,7 @@
 
 #define SYSCALL_RETURN(name, r, sc, str, ...)	\
     if ((r=sc) == -1) {				\
-	perror(#name);				\
+	perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	errno = errno_copy;			\
@@ -48,7 +48,7 @@
 
 #define CHECK_EQ_EXIT(name, X, val, str, ...)	\
     if ((X)==val) {				\
-        perror(#name);				\
+        perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	exit(errno_copy);			\
@@ -56,7 +56,7 @@
 
 #define CHECK_NEQ_EXIT(name, X, val, str, ...)	\
     if ((X)!=val) {				\
-        perror(#name);				\
+        perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	exit(errno_copy);			\
@@ -68,7 +68,7 @@
  *
  */
 static inline void print_error(const char * str, ...) {
-    const char err[]="ERROR: ";
+    const char err[]="\033[1;31mERROR: \033[1;37m";
     va_list argp;
     char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
     if (!p) {
@@ -81,6 +81,7 @@ static inline void print_error(const char * str, ...) {
     va_start(argp, str);
     vfprintf(stderr, p, argp);
     va_end(argp);
+    fprintf(stderr, "\033[0;37m");
     free(p);
 }
 

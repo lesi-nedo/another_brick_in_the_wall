@@ -9,7 +9,6 @@
 
 #ifndef icl_hash_h
 #define icl_hash_h
-#include "parsing_conf.h"
 
 
 #include <stdio.h>

@@ -4,8 +4,10 @@
 #Number of active threads serving connections
 WORKERS=10
 #Maximum number of files that can be in memory
-MAX_NUM_FILES=100
+MAX_NUM_FILES=
 #Maximum size of files that can be in memory
 MAX_ACC_SIZE=1000mb #acceptable format is [kb[KB], mb[MB], gb[GB]]
 #Name for socket file
-SOCKET_NAME="socket.sc"
+SOCKET_NAME=
+#Log file Name
+LOG_FILE_NAME="hey.log"

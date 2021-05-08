@@ -29,20 +29,23 @@
 
 START_TEST(test_parse){
     char str[] = {"./test.txt"};
+    char str2[] = {"./test2.txt"};
     char available_settings[num_avail_settings][LONGEST_STR] = {"MAX_ACC_SIZE",\
-    "MAX_NUM_FILES", "WORKERS", "SOCKET_NAME"};
+    "MAX_NUM_FILES", "WORKERS", "SOCKET_NAME", "LOG_FILE_NAME"};
     Server_conf settings[num_avail_settings];
     init_serv_conf(settings);
     init_settings_arr(settings);
-    for(int i = 0; i < num_avail_settings; i++){
-        ck_assert_str_eq((const char *)settings[i].setting, available_settings[i]);
-    }
-    for(int i = 0; i < num_avail_settings; i++){
-        ck_assert_str_eq((const char *)settings[hash((unsigned char*)available_settings[i])%BASE_MOD%num_avail_settings].setting, available_settings[i]);
-    }
     parse_file(str, settings);
     for(int i = 0; i < num_avail_settings; i++){
         if(!settings[i].str_or_int){
+            ck_assert(settings[i].value_string);
+            free(settings[i].value_string);
+        } else ck_assert(settings[i].value);
+    }
+    parse_file(str2, settings);
+    for(int i = 0; i < num_avail_settings; i++){
+        if(!settings[i].str_or_int){
+            printf("%s\n", settings[i].value_string);
             ck_assert(settings[i].value_string);
             free(settings[i].value_string);
         } else ck_assert(settings[i].value);

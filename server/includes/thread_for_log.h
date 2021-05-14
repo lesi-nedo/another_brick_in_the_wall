@@ -14,6 +14,7 @@ typedef struct {
     char *file_name;
     int pipe[2];
 } Arg_log_th;
+extern Arg_log_th ARG_LOG_TH;
 
 void *log_to_file(void *arg_th);
 

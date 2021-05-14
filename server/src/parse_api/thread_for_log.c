@@ -33,7 +33,7 @@ void *log_to_file(void *arg_th){
     CHECK_EQ_EXIT(log_to_file, args->file_name, NULL, "File name to log all the good stuff is not specified, I'm out.\n", NULL);
     size_t size =strlen(LOGS)+strlen(args->file_name)+1;//directory plus filename
     char *path =  (char *)calloc(size, sizeof(*path));
-    CHECK_EQ_EXIT(malloc, path, NULL, "Probably not enough memory, I'm out.\n", NULL);
+    CHECK_EQ_EXIT(calloc, path, NULL, "Probably not enough memory, I'm out.\n", NULL);
     snprintf(path, size, "%s%s", LOGS, args->file_name);
     mode_t preced = umask(0033);
     //opens or creates file for logs
@@ -43,6 +43,7 @@ void *log_to_file(void *arg_th){
     int fd_log = 0;
     SYSCALL_PRINT(fileno, fd_log, fileno(fl_log), "\033[1;31mATTENTION: \033[0;37mCould not get file descriptor.\n", NULL);
     free(path);
+    free(args->file_name);
     struct tm r_tm;
     time_t now = time(NULL);
     struct tm lc_tm = *localtime_r(&now, &r_tm);

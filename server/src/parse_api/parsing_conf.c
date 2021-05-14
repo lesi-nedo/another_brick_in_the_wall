@@ -212,7 +212,7 @@ void parse_file(const char *file, Server_conf *where_to_save){
         //If the name of the setting is not in array then returns 
         if(strncmp((char *)where_to_save[hashed_val].setting, (char *) set, LONGEST_STR)) {
             printf("\033[1;31m");
-            printf("Error: not recognized setting %s in config.txt\033[0;37m\n", set);
+            printf("Error: not recognized setting %s in config.txt\033[1;36m(but I'm still going :) )\033[0;37m\n", set);
             continue;
         }
         if(is_valid_set((char *)set) == 1){
@@ -251,12 +251,13 @@ void parse_file(const char *file, Server_conf *where_to_save){
         // printf("\033[1m%zd\033[0m <---- ", hashed_val);
         // printf("%s\n", set);
     }
+    fclose(fl);
+    free(conf_line);
     if(errno != 0){
+        
         print_error("getline failed %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
-    fclose(fl);
-    free(conf_line);
     if(is_error) {
             for(size_t i = 0; i< num_avail_settings; i++){
                 if(!where_to_save[i].str_or_int){

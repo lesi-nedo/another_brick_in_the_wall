@@ -141,4 +141,13 @@ static inline int TRYLOCK(pthread_mutex_t* l) {
   return r;	
 }
 
+static inline int TRYLOCK_TIMEOUT(pthread_mutex_t* l, struct timespec *timeout) {
+  int r=0;		
+  if ((r=pthread_mutex_timedlock(l, &*timeout))!=0 && r!=EBUSY) {		    
+    fprintf(stderr, "ERRORE FATALE unlock\n");		    
+    pthread_exit((void*)EXIT_FAILURE);			    
+  }								    
+  return r;	
+}
+
 #endif /* _UTIL_H */

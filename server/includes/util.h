@@ -104,6 +104,20 @@ static inline int isNumber(const char* s, long* n) {
   return 1;   // non e' un numero
 }
 
+static inline int isFloat(const char* s, float* n) {
+  if (s==NULL) return 1;
+  if (strlen(s)==0) return 1;
+  char* e = NULL;
+  errno=0;
+  float val = strtof(s, &e);
+  if (errno == ERANGE) return 2;    // overflow/underflow
+  if (e != NULL && *e == (char)0) {
+    *n = val;
+    return 0;   // successo 
+  }
+  return 1;   // non e' un numero
+}
+
 #define LOCK(l)      if (pthread_mutex_lock(l)!=0)        { \
     fprintf(stderr, "ERRORE FATALE lock\n");		    \
     pthread_exit((void*)EXIT_FAILURE);			    \

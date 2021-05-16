@@ -6,21 +6,21 @@ WORKERS=10
 #Maximum number of files that can be in memory
 MAX_NUM_FILES=100
 #Maximum size of files that can be in memory
-MAX_ACC_SIZE=1000mb #acceptable format is [kb[KB], mb[MB], gb[GB]]
+MAX_ACC_SIZE=1000mb #acceptable formats are [kb[KB], mb[MB], gb[GB]]
 #Name for socket file
 SOCKET_NAME="some_name"
 #Log file Name
 LOG_FILE_NAME="hey.log"
 #How many levels of importance in cache
-CACHE_NUM_LEVELS=16;
+CACHE_NUM_LEVELS=16
 #Range for each level, it gets multiplied by each level number i.e
 #CACHE_RANGE*i where 0 <= i < MAX_NUM_LEVELS and starting from end;
 #so for example at level CACHE_NUM_LEVELS - 1 we will have files that have been 
 #referenced at least CACHE_RANGE*0 to CACHE_RANGE*1 but excluding just inserted files.
 #It only implies in one way, it is not guaranteed that the only files that are referenced int range of the level
 #are 100% inside that level.
-#must be > 0
-CACHE_RANGE=3
+#must be > 1
+CACHE_RANGE=2
 #This value gets multiplied by MAX_NUM_FILES to create extra space in cache 
-#hopefully for better performance.
-EXTRA_CACHE_SPACE
+#hopefully for better performance. (from test it emerged that this value has to be small)
+EXTRA_CACHE_SPACE=0.05

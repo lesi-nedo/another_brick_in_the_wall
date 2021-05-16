@@ -4,6 +4,9 @@
 #include <errno.h>
 #include <ctype.h>
 
+const unsigned  char available_settings[num_avail_settings][LONGEST_STR] = {"MAX_ACC_SIZE",\
+    "MAX_NUM_FILES", "WORKERS", "SOCKET_NAME", "LOG_FILE_NAME", "CACHE_NUM_LEVELS", "CACHE_RANGE", "EXTRA_CACHE_SPACE"};
+
 
 /** 
  * @param: string to be validated
@@ -162,23 +165,49 @@ static short int is_valid_max_file(char *arg, void *value){
     return 0;
 }
 
+static short int is_valid_float(char *arg, void *value){
+    if(arg==NULL){
+        printf("\033[1;31m null argument in is_valid_set.\033[0;37m\n");
+        return 0;
+    }
+    while(isspace(*arg)) arg++;
+    size_t len_str = strlen(arg)+1;
+    size_t size =0;
+    size_t space = 0;
+    int dot = 0;
+    float arg_to_ass = 0;
+    while(space < len_str && dot < 2 && (isdigit(*(arg+size)) || *(arg+size) == '.')) {
+        if(*(arg+size) == '.') dot++;
+        size++;
+    }
+    if(size == 0 || dot > 1) return 1;//return because there are no digits
+    space += size;
+    while(space < len_str && isspace(*(arg+space))) space++;
+    if(space < len_str && (isalnum(*(arg+space)) || ispunct(*(arg+space))) && *(arg+space) != '#') return 1;
+    arg[size] = '\0';
+    if(isFloat(arg, &arg_to_ass) != 0){
+        return 1;
+    }
+    *(float *)value = arg_to_ass;
+    return 0;
+}
+
 
 /** 
  * @author:Dan Bernstein
  * @website: http://www.cse.yorku.ca/~oz/hash.html
  * @param: take a string to hash it
 */
-    unsigned long
-    hash(unsigned char *str)
+unsigned long 
+hash(const unsigned char *str)
     {
-        unsigned long hash = 5381;
-        int c;
-
-        while ((c = *str++))
-            hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-
-        return hash;
+    unsigned long   hash = 5381;
+    int c;
+    while ((c = *str++)){
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
     }
+    return hash;
+}
 
 /**
  * @param: file pathname to the file absolute or relative.
@@ -208,7 +237,7 @@ void parse_file(const char *file, Server_conf *where_to_save){
         char *arg = conf_line+char_span+1;
         long valid_arg_int = 0;
         //Hashed setting
-        unsigned long hashed_val = hash(set)%BASE_MOD%num_avail_settings;
+        unsigned long  hashed_val = hash(set)%BASE_MOD%num_avail_settings;
         //If the name of the setting is not in array then returns 
         if(strncmp((char *)where_to_save[hashed_val].setting, (char *) set, LONGEST_STR)) {
             printf("\033[1;31m");
@@ -236,14 +265,33 @@ void parse_file(const char *file, Server_conf *where_to_save){
                 printf("\033[0;37m");
                 continue;
             }
+            if(hashed_val == CHANGE_RANGE){
+                if(valid_arg_int <=1){
+                    is_error = 1;
+                    printf("\033[1;31m");
+                    printf("Error:  invalid argument of setting name \033[1;35m %s \033[1;31min config.txt\n", set);
+                    printf("\033[0;32m");
+                    printf("Usage: positive integers greater than 0\033[0;37m\n");
+                    continue;
+                }
+            }
             where_to_save[hashed_val].value =valid_arg_int;
-        } else {
+        } else if(where_to_save[hashed_val].str_or_int == 0) {
             if(where_to_save[hashed_val].validator(arg, (void *) &where_to_save[hashed_val].value_string) == 1){
                 is_error = 1;
                 printf("\033[1;31m");
                 printf("Error:  invalid argument of setting name \033[1;35m %s \033[1;31min config.txt\n", set);
                 printf("\033[0;32m");
                 printf("Usage: string with only letters and a delimiter that can be '-' or '_'\033[0;37m\n");
+                continue;
+            }
+        } else {
+            if(where_to_save[hashed_val].validator(arg, (void *) &where_to_save[hashed_val].value_float) == 1){
+                is_error = 1;
+                printf("\033[1;31m");
+                printf("Error:  invalid argument of setting name \033[1;35m %s \033[1;31min config.txt\n", set);
+                printf("\033[0;32m");
+                printf("Usage: float number\033[0;37m\n");
                 continue;
             }
         }
@@ -260,7 +308,7 @@ void parse_file(const char *file, Server_conf *where_to_save){
     }
     if(is_error) {
             for(size_t i = 0; i< num_avail_settings; i++){
-                if(!where_to_save[i].str_or_int){
+                if(where_to_save[i].str_or_int == 1){
                     if(where_to_save[i].value_string != NULL){
                         free(where_to_save[i].value_string);
                     }
@@ -279,44 +327,69 @@ void parse_file(const char *file, Server_conf *where_to_save){
 */
 void init_settings_arr(Server_conf *settings){
     //TODO: UPDATE ON EVERY NEW SETTING
-    unsigned char available_settings[num_avail_settings][LONGEST_STR] = {"MAX_ACC_SIZE",\
-    "MAX_NUM_FILES", "WORKERS", "SOCKET_NAME", "LOG_FILE_NAME"};
+    
     //TODO:CAST AS VOID * & THE IN FUNCTION HANDLER CAST AS CHAR ** IF OPTION HAS A STRING ARGUMENT.
     for(size_t i=0; i<num_avail_settings; i++){
         unsigned long hashed_val = hash(available_settings[i])%BASE_MOD%num_avail_settings;
         strncpy((char *)settings[hashed_val].setting, (char *)available_settings[i], LONGEST_STR);
         //EVERY TIME MAKE SURE THAT SETTINGS ARE HASHED CORRECTLY
-        // printf("HASHED: %zd STRING: %s\n", hashed_val, available_settings[i]);
+        // printf("HASHED: %lu STRING: %s\n", hashed_val, available_settings[i]);
         switch(i){
             case 0:
                 settings[hashed_val].value_string = NULL;
                 settings[hashed_val].value = 0;
+                settings[hashed_val].value_float = 0;
                 settings[hashed_val].str_or_int = 1;
                 settings[hashed_val].validator = is_valid_max_size;
                 break;
             case 1:
                 settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
                 settings[hashed_val].value = 0;
                 settings[hashed_val].str_or_int = 1;
                 settings[hashed_val].validator = is_valid_max_file;
                 break;
             case 2:
                 settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
                 settings[hashed_val].value = 0;
                 settings[hashed_val].str_or_int = 1;
                 settings[hashed_val].validator = is_valid_max_file;
                 break;
             case 3:
                 settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
                 settings[hashed_val].value = 0;
                 settings[hashed_val].str_or_int = 0;
                 settings[hashed_val].validator = is_valid_socket;
                 break;
             case 4:
                 settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
                 settings[hashed_val].value = 0;
                 settings[hashed_val].str_or_int = 0;
                 settings[hashed_val].validator = is_valid_log_file;
+                break;
+            case 5:
+                settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
+                settings[hashed_val].value = 0;
+                settings[hashed_val].str_or_int = 1;
+                settings[hashed_val].validator = is_valid_max_file;
+                break;
+            case 6:
+                settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
+                settings[hashed_val].value = 0;
+                settings[hashed_val].str_or_int = 1;
+                settings[hashed_val].validator = is_valid_max_file;
+                break;
+            case 7:
+                settings[hashed_val].value_string = NULL;
+                settings[hashed_val].value_float = 0;
+                settings[hashed_val].value = 0;
+                settings[hashed_val].str_or_int = 2;
+                settings[hashed_val].validator = is_valid_float;
                 break;
             default:
                 printf("\033[1;35mSomething went terribly wrong.\n");

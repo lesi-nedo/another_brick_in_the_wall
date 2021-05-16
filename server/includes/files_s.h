@@ -1,5 +1,4 @@
 /**
- * @file
  *
  * Header file for icl_hash routines.
  *
@@ -46,9 +45,6 @@ struct icl_hash_s {
 
 extern icl_hash_t *FILES_STORAGE;
 
-int
-update_pos(cach_entry_t *);
-
 icl_hash_t *
 icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*) );
 
@@ -56,13 +52,15 @@ icl_entry_t
 * icl_hash_find(icl_hash_t *, void* );
 
 icl_entry_t
-* icl_hash_insert(icl_hash_t *, void*, void *);
+* icl_hash_insert(icl_hash_t *, void*, void *, pointers *);
 
 int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
 int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*) );
+int remove_victim(icl_hash_t *, void *, pointers *);
+
 
 /* compare function */
 int 

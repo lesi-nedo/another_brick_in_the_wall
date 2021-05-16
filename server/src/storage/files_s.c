@@ -1,15 +1,4 @@
-/**
- * @file icl_hash.c
- *
- * Dependency free hash table implementation.
- *
- * This simple hash table implementation should be easy to drop into
- * any other piece of code, it does not depend on anything else :-)
- * 
- * @author Jakub Kurzak
- */
-/* $Id: icl_hash.c 2838 2011-11-22 04:25:02Z average $ */
-/* $UTK_Copyright: $ */
+
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,7 +6,7 @@
 #include <assert.h>
 #include <time.h>
 #include <stdint.h>
-#include "files_s.h"
+#include "../../includes/files_s.h"
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
@@ -25,36 +14,7 @@
 #include "../../includes/thread_for_log.h"
 
 
-#define BITS_IN_int     ( sizeof(int) * CHAR_BIT )
-#define THREE_QUARTERS  ((int) ((BITS_IN_int * 3) / 4))
-#define ONE_EIGHTH      ((int) (BITS_IN_int / 8))
-#define HIGH_BITS       ( ~((unsigned int)(~0) >> ONE_EIGHTH ))
-/**
- * @copyright
- *This is free and unencumbered software released into the public domain.
-
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
-
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
-
-For more information, please refer to <http://unlicense.org/>
+/*
  *@author: Christopher Wellons 
  *@taken_from: https://github.com/skeeto/hash-prospector
  * @param[in] key -- the string to be hashed
@@ -105,8 +65,24 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
     if(!ht->buckets) return NULL;
 
     ht->nbuckets = nbuckets;
-    for(i=0;i<ht->nbuckets;i++)
-        ht->buckets[i] = NULL;
+    for(i=0;i<ht->nbuckets;i++){
+        ht->buckets[i] = (icl_entry_t*)calloc(1,sizeof(icl_entry_t));
+        if(!ht->buckets[i]){ 
+            return NULL;
+        }
+        int res = 0;
+        ht->buckets[i]->time = 0;
+        SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&(ht->buckets[i]->wr_dl_ap_lck), NULL), "This was not expected, well it is a shame maybe try again.\n", NULL);
+        ht->buckets[i]->key = NULL;
+        ht->buckets[i]->ref= 0;
+        ht->buckets[i]->data = NULL;
+        ht->buckets[i]->empty = 1;
+        ht->buckets[i]->am_being_removed = 0;
+        ht->buckets[i]->need_to_be_removed = 0;
+        ht->buckets[i]->me_but_in_cache = NULL;
+        ht->buckets[i]->prev = NULL;
+        ht->buckets[i]->next = NULL;
+    }
 
     ht->hash_function = hash_function ? hash_function : triple32;
     ht->hash_key_compare = hash_key_compare ? hash_key_compare : string_compare;
@@ -156,20 +132,22 @@ icl_hash_find(icl_hash_t *ht, void* key)
 
 
 icl_entry_t *
-icl_hash_insert(icl_hash_t *ht, void* key, void *data)
+icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
 {
     icl_entry_t *curr, *prev;
     unsigned int hash_val;
     int res;
 
-    if(!ht || !key) return NULL;
-
+    if(!ht || !key || !ret){ 
+        errno = EINVAL;
+        return NULL;
+    }
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
 
     for (prev = NULL, curr=ht->buckets[hash_val]; curr != NULL; prev = curr, curr=curr->next){
         if(curr->empty){
             //!LOCK ACQUIRED
-            if(TRYLOCK(&curr->wr_dl_ap_lck)){
+            if(!TRYLOCK(&curr->wr_dl_ap_lck)){
                 if(curr->empty){
                     curr->key = key;
                     curr->data = data;
@@ -178,22 +156,23 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
                     curr->am_being_removed = 0;
                     curr->ref = MY_CACHE->incr_entr;
                     curr->time = time(NULL);
-                    curr->am_being_used = 1;
                     //!LOCK RELEASED if insert
                     UNLOCK(&curr->wr_dl_ap_lck);
-                    cach_hash_insert_bind(MY_CACHE, curr);
+                    cach_hash_insert_bind(MY_CACHE, curr, &*ret);
                     return curr;
                 }
+                //!LOCK RELEASED if not insert
+                UNLOCK(&curr->wr_dl_ap_lck);
             }
         }
-        if ( ht->hash_key_compare(curr->key, key)){
+        if (!curr->empty && ht->hash_key_compare(curr->key, key)){
             if(curr->am_being_removed){
                 while(curr->am_being_removed){
                     #ifdef DEBUG
                     printf("%s\n",  (char *)curr->key);
                     #endif // DEBUG
                 }
-                if(TRYLOCK(&curr->wr_dl_ap_lck)){
+                if(!TRYLOCK(&curr->wr_dl_ap_lck)){
                     //!LOCK ACQUIRED
                     if(curr->empty){
                         curr->key = key;
@@ -203,17 +182,23 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
                         curr->need_to_be_removed = 0;
                         curr->ref = MY_CACHE->incr_entr;
                         curr->time = time(NULL);
-                        curr->am_being_used = 1;
                         //!LOCK RELEASED if insert
                         UNLOCK(&curr->wr_dl_ap_lck);
-                        cach_hash_insert_bind(MY_CACHE, curr);
+                        cach_hash_insert_bind(MY_CACHE, curr, &*ret);
                         return curr;
                     }
+                    //!LOCK RELEASED if not insert
+                    UNLOCK(&curr->wr_dl_ap_lck);
                 }
             }
             errno = EEXIST;
             return(NULL); /* key already exists */
         }
+    }
+
+    while(curr){
+        prev = curr;
+        curr=curr->next;
     }
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
@@ -229,6 +214,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     curr->empty = 0;
     curr->am_being_removed = 0;
     curr->need_to_be_removed = 0;
+    curr->me_but_in_cache = NULL;
     curr->prev = NULL;
     curr->next = NULL;
     long res1= 0, res2 = 0; 
@@ -238,19 +224,28 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data)
     lrand48_r(&buff, &res1);
     lrand48_r(&buff, &res2);
     if(prev == NULL || (res1 - res2) < 0){
+        //!LOCK ACQUIRED
+        LOCK(&ht->buckets[hash_val]->wr_dl_ap_lck);
         curr->next = ht->buckets[hash_val]; /* add at start */
         if(ht->buckets[hash_val] != NULL) ht->buckets[hash_val]->prev = curr;
         ht->buckets[hash_val] = curr;
         ht->nentries++;
-        curr->am_being_used = 1;
-        cach_hash_insert_bind(MY_CACHE, curr);
+        curr->am_being_used = 0;
+        //!LOCK RELEASED
+        UNLOCK(&ht->buckets[hash_val]->next->wr_dl_ap_lck);
+        cach_hash_insert_bind(MY_CACHE, curr, &*ret);
         return curr;
 
     } else {
+        //!LOCK ACQUIRED
+        LOCK(&prev->wr_dl_ap_lck);
+        ht->nentries++;
         prev->next = curr;
         curr->prev = prev;
         curr->am_being_used = 0;
-        cach_hash_insert_bind(MY_CACHE, curr);
+        //!LOCK RELEASED
+        UNLOCK(&prev->wr_dl_ap_lck);
+        cach_hash_insert_bind(MY_CACHE, curr, &*ret);
         return curr;
     }
     
@@ -276,17 +271,17 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
     }
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
     for (curr=ht->buckets[hash_val]; curr != NULL; )  {
-        if ( ht->hash_key_compare(curr->key, key)) {
+        if (!curr->empty && ht->hash_key_compare(curr->key, key)) {
             //!LOCK ACQUIRED
             LOCK(&curr->wr_dl_ap_lck);
-            curr->need_to_be_removed = 1;
-            curr->am_being_removed = 1;
             if(curr->am_being_used){
                 errno = ETXTBSY;
                 //!LOCK RELEASED if am_being_used == 1
                 UNLOCK(&curr->wr_dl_ap_lck);
                 return -1;
             }
+            curr->need_to_be_removed = 1;
+            curr->am_being_removed = 1;
            //This might be problematic
             for(;;){
                 if(!curr->am_being_removed){
@@ -300,7 +295,7 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
                         #ifdef DEBUG
                             assert(curr->ref == *curr->me_but_in_cache->ref);
                         #endif // DEBUG
-                        curr->me_but_in_cache->am_dead =0;
+                        curr->me_but_in_cache->am_dead =1;
                         curr->me_but_in_cache->file_name = NULL;
                         if((*free_key) && curr->key) free_key(curr->key);
                         if((*free_data) && curr->data) free_key(curr->data);
@@ -309,26 +304,78 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
                         break;
                     }
                     #ifdef DEBUG
-                        printf("IF CODE IS BUGGED THEN THIS LOOP IN INFINITE. (icl_hash_delete_ext)\n");
+                        printf("IF CODE IS BUGGED THEN THIS LOOP IS INFINITE. (icl_hash_delete_ext)\n");
                     #endif // DEBUG
                     //!LOCK RELEASED
                     UNLOCK(&curr->me_but_in_cache->mutex);
                 }
             }
+            curr->need_to_be_removed = 0;
             curr->empty = 1;
             curr->ref = 0;
             curr->am_being_used = 0;
             curr->time = 0;
             curr->am_being_removed = 0;
+            //IF THERE IS MEMORY LEAK IT MIGHT HAPPENED HERE
+            curr->key = NULL;
+            curr->data = NULL;
+            ht->nentries--;
             //!LOCK RELEASED
-            UNLOCK(&ht->buckets[hash_val]->wr_dl_ap_lck);
+            UNLOCK(&curr->wr_dl_ap_lck);
             return 0;
         }
         curr = curr->next;
     }
     return -1;
 }
-
+/**
+ * @param ht -- table to look for a victim
+ * @param key -- the key to look for
+ * @param ret -- where will be save pointers to key and data
+ * @return 0 success, -1 not success
+ */
+int remove_victim(icl_hash_t *ht, void *key, pointers *ret){
+    icl_entry_t *curr;
+    unsigned int hash_val;
+    if(!ht || !key || !ret ) {
+        errno = EINVAL;
+        return -1;
+    }
+    hash_val = (* ht->hash_function)(key) % ht->nbuckets;
+    for (curr=ht->buckets[hash_val]; curr != NULL; curr = curr->next)  {
+        if (!curr->empty  && ht->hash_key_compare(curr->key, key)) {
+            //!LOCK ACQUIRED
+            LOCK(&curr->wr_dl_ap_lck);
+            if(curr->am_being_used){
+                errno = ETXTBSY;
+                //!LOCK RELEASED if am_being_used == 1
+                UNLOCK(&curr->wr_dl_ap_lck);
+                return -1;
+            }
+            curr->am_being_removed = 1;
+            curr->empty = 1;
+            curr->ref = 0;
+            curr->am_being_used = 0;
+            curr->time = 0;
+            curr->need_to_be_removed = 0;
+            ret->key = curr->key;
+            ret->data = curr->data;
+            curr->key = NULL;
+            curr->data = NULL;
+            ht->nentries--;
+            //!LOCK RELEASED
+            curr->am_being_removed = 0;
+            UNLOCK(&curr->wr_dl_ap_lck);
+            return 0;
+        }
+    }
+    #ifdef DEBUG
+        fprintf(stderr, "If you read this and you are prof. Torquati then who wrote this code is in trouble :).BUG: file is in cache but not in files storage.\n");
+        assert(1);
+    #endif // DEBUG
+    errno = ENODATA;
+    return -1;
+}
 /**
  * Free hash table structures (key and data are freed using functions).
  *
@@ -352,8 +399,9 @@ icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(void
             next=curr->next;
             if (*free_key && curr->key) (*free_key)(curr->key);
             if (*free_data && curr->data) (*free_data)(curr->data);
-            if(pthread_mutex_destroy(&curr->wr_dl_ap_lck)){
-                fprintf(stderr, "trying to destroy the lock.\n");
+            if((errno = pthread_mutex_destroy(&curr->wr_dl_ap_lck))){
+                if(curr->key) printf("%s\n",(char *)curr->key);
+                fprintf(stderr, "trying to destroy the lock. ERROR: %s\n", strerror(errno));
                 //dprintf(ARG_LOG_TH.pipe[WRITE], "ERROR: trying to destroy lock in icl_hash_destroy.\n");
             }
             free(curr);
@@ -388,7 +436,7 @@ icl_hash_dump(FILE* stream, icl_hash_t* ht)
     for(i=0; i<ht->nbuckets; i++) {
         bucket = ht->buckets[i];
         for(curr=bucket; curr!=NULL; ) {
-            if(curr->key)
+            if(!curr->empty && curr->key)
                 fprintf(stream, "icl_hash_dump: %s: %p\n", (char *)curr->key, curr->data);
             curr=curr->next;
         }
@@ -415,10 +463,8 @@ cach_entry_t *bind_two_tables_create_entry(icl_entry_t *node, int group){
         errno=EINVAL;
         return NULL;
     }
-    int res = 0;
     cach_entry_t *entry = (cach_entry_t *) malloc(sizeof(cach_entry_t));
     CHECK_EQ_EXIT(malloc, entry, NULL, "Sorry not sorry but you are out of memory, bye.\n", NULL);
-    SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&entry->mutex, NULL), "Sorry not sorry but you something went terribly wrong, bye.\n", NULL);
     entry->am_dead = 0;
     entry->ref = &node->ref;
     entry->group = group;
@@ -450,8 +496,8 @@ void print_storage(icl_hash_t *ht){
         for (curr=ht->buckets[i]; curr != NULL;){
             if(!curr->empty){
                 printf("%s->", (char *)curr->key);
-                curr=curr->next;
             }
+            curr=curr->next;
         }
         }else printf("NULL");
         printf("\n");

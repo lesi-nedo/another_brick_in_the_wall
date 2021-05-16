@@ -7,17 +7,22 @@ GNU=-D_GNU_SOURCE
 LIB=-lpthread
 
 DIR_LINK=./parse_api/
+DIR_STOR=./storage/
+
 TARGET=main
 LOG_TARGET=thread_for_log
 PARSE_TARGET=parsing_conf
+TARG_STOR=files_s
+TARG_CACH=new
 
 .PHONY: clean
 .SUFFIXES: .c .h
 
 all: ${TARGET}
 
-${TARGET}: ${TARGET}.c  $(DIR_LINK)${LOG_TARGET}.c $(DIR_LINK)$(PARSE_TARGET).c
-	@${CC} ${FLAGS} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
+${TARGET}: ${TARGET}.c  $(DIR_LINK)${LOG_TARGET}.c $(DIR_LINK)$(PARSE_TARGET).c\
+${DIR_STOR}${TARG_STOR}.c ${DIR_STOR}${TARG_CACH}.c
+	${CC} ${FLAGS} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
 
 clean:
 	${RM} ~core *.out *~ core $(TARGET)

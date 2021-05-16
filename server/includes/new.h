@@ -4,6 +4,7 @@
 typedef struct cach_entry_s cach_entry_t;
 typedef struct cach_fd_s cach_fd_t;
 typedef struct cach_hash_s cach_hash_t;
+typedef struct pass_pointers pointers;
 
 #include <stdio.h>
 #include <pthread.h>
@@ -13,6 +14,10 @@ typedef struct cach_hash_s cach_hash_t;
 extern "C" {
 #endif
 
+struct pass_pointers {
+    void *key;
+    void *data;
+};
 
 struct cach_entry_s {
     int am_dead;
@@ -42,10 +47,9 @@ struct cach_hash_s {
     //number of levels in which the lowest has the most importance i.e has been referenced the most.
     //This constant is getting multiplied by another cost for creating minimum and maximum boundaries per group.
     size_t NUM_GROUP;
-
+    int nbuckets;
     size_t CACHE_RANGE;
     unsigned long int incr_entr;
-    int nentries;
     int nfiles;
     int MAX_LAST_LEVEL;
     int START_INI_CACHE;
@@ -62,17 +66,20 @@ struct Cache_settings{
 //SETTING cache as global variable.
 extern cach_hash_t *MY_CACHE;
 
+unsigned int get_next_index(unsigned int, int);
 cach_hash_t *
 cach_hash_create(struct Cache_settings, unsigned int (*hash_function)(unsigned int, int));
 
+int
+find_victim(cach_hash_t *, pointers *);
 unsigned long
 get_seed(pthread_t);
 
 cach_entry_t
-* cach_hash_insert_bind(cach_hash_t *, icl_entry_t *);
+* cach_hash_insert_bind(cach_hash_t *, icl_entry_t *, pointers *);
 
 int
-cach_hash_destroy(cach_hash_t *, void (*)(void*)),
+cach_hash_destroy(cach_hash_t *),
     cach_hash_dump(FILE *, cach_hash_t *);
 
 int cach_hash_delete( cach_hash_t *, unsigned int, char *, void (*free_key)(void*) );

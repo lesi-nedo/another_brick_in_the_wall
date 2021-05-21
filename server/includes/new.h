@@ -20,13 +20,15 @@ struct pass_pointers {
 };
 
 struct cach_entry_s {
-    int am_dead;
+    unsigned long int am_dead;
+    icl_entry_t *me_but_in_store;
     //importance of item
     unsigned long int *ref;
     int group;
     char* file_name;
     pthread_mutex_t mutex;
-    //>=1 then the file is new 
+    time_t time;
+    //>=1 then the file is new
     struct cach_entry_s* next;
     struct cach_entry_s* prev;
 };
@@ -34,11 +36,12 @@ struct cach_entry_s {
 struct cach_fd_s {
     int group;
     //number of empty entries
-    int num_dead;
+    long int num_dead;
     pthread_mutex_t mutex_for_cleanup;
     int max_and_you_out;
     int min_and_you_in;
-    int nfiles_row;
+    long int threads_in;
+    long int nfiles_row;
     cach_entry_t *head;
     cach_entry_t* tail;
 };
@@ -49,8 +52,8 @@ struct cach_hash_s {
     size_t NUM_GROUP;
     int nbuckets;
     size_t CACHE_RANGE;
-    unsigned long int incr_entr;
-    int nfiles;
+    long int incr_entr;
+    long  int nfiles;
     int MAX_LAST_LEVEL;
     int START_INI_CACHE;
     cach_fd_t **buckets;
@@ -71,9 +74,12 @@ cach_hash_t *
 cach_hash_create(struct Cache_settings, unsigned int (*hash_function)(unsigned int, int));
 
 int
-find_victim(cach_hash_t *, pointers *);
+find_victim(cach_hash_t *, pointers *, cach_entry_t *);
 unsigned long
 get_seed(pthread_t);
+
+unsigned long int
+get_rand();
 
 cach_entry_t
 * cach_hash_insert_bind(cach_hash_t *, icl_entry_t *, pointers *);
@@ -82,7 +88,6 @@ int
 cach_hash_destroy(cach_hash_t *),
     cach_hash_dump(FILE *, cach_hash_t *);
 
-int cach_hash_delete( cach_hash_t *, unsigned int, char *, void (*free_key)(void*) );
 #if defined(c_plusplus) || defined(__cplusplus)
 }
 #endif

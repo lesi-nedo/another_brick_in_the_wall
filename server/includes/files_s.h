@@ -19,13 +19,11 @@ extern "C" {
 #endif
 
 struct icl_entry_s {
-    int empty;
+    unsigned long int empty;
     void* key;
     void *data;
     unsigned long int ref;
-    int am_being_used;
-    int am_being_removed;
-    int need_to_be_removed;
+    long int am_being_used;
     pthread_mutex_t wr_dl_ap_lck;
     struct icl_entry_s* next;
     //!KEEP ALL THE TIME UPDATED TWO TABLES
@@ -37,14 +35,13 @@ struct icl_entry_s {
 
 struct icl_hash_s {
     int nbuckets;
-    int nentries;
+    unsigned long int nentries;
     icl_entry_t **buckets;
     unsigned int (*hash_function)(void*);
     int (*hash_key_compare)(void*, void*);
 };
 
 extern icl_hash_t *FILES_STORAGE;
-
 icl_hash_t *
 icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_key_compare)(void*, void*) );
 
@@ -58,17 +55,17 @@ int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
-int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*) );
-int remove_victim(icl_hash_t *, void *, pointers *);
+int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*), pointers * );
 
+int msleep(long);
 
 /* compare function */
 int 
 string_compare(void* a, void* b);
-unsigned int
-triple32(void *);
 
-int bind_two_tables_init_cache(cach_entry_t *, icl_entry_t *);
+unsigned int
+hash_pjw(void*);
+
 cach_entry_t  *bind_two_tables_create_entry(icl_entry_t *, int);
 char *rand_string(char *, size_t);
 void print_storage(icl_hash_t *);

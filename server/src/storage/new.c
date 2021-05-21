@@ -11,7 +11,8 @@
 #include <limits.h>
 #include "../../includes/thread_for_log.h"
 
-
+#define SOME_CONST 10 //how many times each level gets scan before stop and report a bug
+#define BOOST 0.75 //has to be between 0 and 1
 
 unsigned int get_next_index(unsigned int key, int NUM_GROUP){
 
@@ -59,6 +60,7 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
         ht->buckets[i]->tail = NULL;
         ht->buckets[i]->nfiles_row = 0;
         ht->buckets[i]->num_dead = 0;
+        ht->buckets[i]->threads_in = 0;
         SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&(ht->buckets[i]->mutex_for_cleanup), NULL), "This was not expected, well it is a shame maybe try again.\n", NULL);
         ht->buckets[i]->min_and_you_in = sett.CACHE_RANGE*i;
         ht->buckets[i]->max_and_you_out = sett.CACHE_RANGE*(i+1);
@@ -71,7 +73,9 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
         to_ins->am_dead = 1;
         to_ins->ref = NULL;
         to_ins->group = hashed;
+        to_ins->me_but_in_store = NULL;
         to_ins->file_name = NULL;
+        to_ins->time = 0;
         SYSCALL_EXIT(pthread_mutex_init, res, pthread_mutex_init(&to_ins->mutex, NULL), "Wasn't my fault, however I'm sorry <3 <3\n", NULL);
         to_ins->next = NULL;
         to_ins->prev = NULL;
@@ -115,12 +119,17 @@ get_rand_diff(){
     return res1 -res2;
 }
 
-signed int
+/**
+ * Uses a reentrant type of function to generate random numbers
+ * @return -- return a pseudo random number between [0,2^31]
+ */
+unsigned long int
 get_rand(){
     long res1= 0; 
     struct drand48_data buff;
     unsigned long seed = get_seed(pthread_self()^getpid());
     srand48_r(seed, &buff);
+    lrand48_r(&buff, &res1);
     return res1;
 }
 
@@ -130,6 +139,8 @@ get_rand(){
  */
 int 
 _get_level(int val){
+    //if  nfiles are less then we give boost to the first position
+    //because  noticed at beginning all files are ending up in end.
     int res = val;
     int index = 0;
     if(val >= MY_CACHE->MAX_LAST_LEVEL){
@@ -157,19 +168,38 @@ _get_level(int val){
  */
 
 cach_entry_t
-*_till_end(cach_entry_t *curr, icl_entry_t *file_in, int tail_or_head){
+*_till_end(cach_entry_t *curr, icl_entry_t *file_in, int tail_or_head, int index){
+    MY_CACHE->buckets[index]->threads_in++;
     while(curr){
         if(curr->am_dead){
-            if(!TRYLOCK(&curr->mutex)){
+            if(TRYLOCK(&curr->mutex) == 0){
                 //!LOCK ACQUIRED
                 if(curr->am_dead){
-                    curr->am_dead = 0;
-                    curr->ref = &file_in->ref;
-                    curr->file_name = file_in->key;
-                    file_in->me_but_in_cache = curr;
-                    //!LOCK RELEASED if am_dead == 1
-                    UNLOCK(&curr->mutex);
-                    return curr;
+                    LOCK(&file_in->wr_dl_ap_lck)
+                    if(!file_in->empty){
+                        curr->am_dead = 0;
+                        curr->me_but_in_store= file_in;
+                        MY_CACHE->nfiles++;
+                        curr->ref = &file_in->ref;
+                        curr->time = file_in->time;
+                        curr->file_name = file_in->key;
+                        file_in->me_but_in_cache = curr;
+                        MY_CACHE->buckets[curr->group]->nfiles_row++;
+                        MY_CACHE->buckets[curr->group]->num_dead--;
+                        signed int diff = MY_CACHE->incr_entr -  MY_CACHE->buckets[curr->group]->min_and_you_in;
+                        file_in->ref = diff <= ~diff+1 ? 0 : diff;
+                        MY_CACHE->buckets[index]->threads_in--;
+                        //!LOCK RELEASED if am_dead == 1
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(&file_in->wr_dl_ap_lck);
+                        return curr;
+                    } else {
+                        MY_CACHE->buckets[index]->threads_in--;
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(&file_in->wr_dl_ap_lck);
+                        errno = ENODATA;
+                        return NULL;
+                    }
                 }
                  //!LOCK RELEASED if am_dead == 1
                 UNLOCK(&curr->mutex);
@@ -179,258 +209,367 @@ cach_entry_t
             curr = curr->prev;
         } else curr = curr->next;
     }
+    MY_CACHE->buckets[index]->threads_in--;
     return NULL;
 }
+/**
+ * @param ht -- cache to work with
+ * @param index -- starting point, must be 0 <= index > my-cache->NUM_GROUP
+ * @return -- new index where was a free block
+ */
 
-
+int _find_dead_helper(cach_hash_t *ht, int index){
+    index = (get_rand() ^ pthread_self()) % ht->NUM_GROUP;
+    //0 to decrement 1 to increment
+    int min_or_plu = 0;
+    int limit = 0;
+    while(limit<SOME_CONST){
+        if((ht->buckets[index]->num_dead)- ht->buckets[index]->threads_in > 0){
+            return index;
+        }
+        if(!min_or_plu){
+            index--;
+        } else index++;
+        if(index < 0){
+            index = 0;
+            min_or_plu = 1;
+            sched_yield();
+            limit++;
+        }
+        if(index >= MY_CACHE->NUM_GROUP){
+            index = MY_CACHE->NUM_GROUP-1;
+            min_or_plu = 0;
+            sched_yield();
+            limit++;
+        }
+    }
+    FILE *open = fopen("error.txt", "a");
+    CHECK_EQ_EXIT(fopen, open, NULL, "\nSorry Not sorry but I'm out. love to you <3\n", NULL);
+    fprintf(stderr, "\033[1;31mERROR:\033[0;37m \033[1;96mCould not find a level which has a free spot, this should not have happened. You'll find last status of cache and storage in \033[1;35merror.txt\033[0;37m\n");
+    icl_hash_dump(open, FILES_STORAGE);
+    cach_hash_dump(open, MY_CACHE);
+    fflush(open);
+    fclose(open);
+    exit(EXIT_FAILURE);
+    return 0;
+}
 /**
  * @param curr -- starting point from which will be searched
  * @param temp -- temporary entries to hold all variables information to be insert into cache
  * @return -- 0 success 
  */
 int
- _helper_ins_rand(cach_hash_t *ht, cach_entry_t *temp, icl_entry_t *file_in, int index){
+ _helper_ins_rand(cach_hash_t *ht, cach_entry_t *temp, icl_entry_t *file_in_store, int index, pointers *ret){
     //0 starts from head 1  from tail.
     int tail_or_head = get_rand_diff() < 0 ? 1 : 0;
-    ht->nfiles++;
+    MY_CACHE->buckets[index]->threads_in++;
+    int ref = 0;
+    icl_entry_t *file_in = file_in_store;
     cach_entry_t *curr = tail_or_head == 0? ht->buckets[index]->head: ht->buckets[index]->tail;
     if(ht == NULL || temp == NULL || file_in == NULL){
         fprintf(stderr, "\033[1;31mFatal ERROR\033[1;37m in _helper_ins_rand, one of the argument is null, congratulation your code has a bug.\033[0;37m\n");
+        MY_CACHE->buckets[index]->threads_in--;
         exit(EXIT_FAILURE);
     }
+     #ifdef DEBUG
+    assert(string_compare(temp->file_name, file_in->key));
+    assert(string_compare(temp->me_but_in_store->key, file_in->key));
+    assert(string_compare(temp->me_but_in_store->me_but_in_cache->file_name, temp->file_name));
+    #endif // DEBUG
     while(curr != NULL){
+        fflush(stdout);
         if(curr->am_dead){
             //JUMPS TO THE END BECAUSE WE NEED TO DELETE TEMP
-            if(file_in->need_to_be_removed) goto delete_temp;
-            if(!TRYLOCK(&curr->mutex)){
+            if(TRYLOCK(&curr->mutex) == 0){
                 //!LOCK ACQUIRED
                 if(curr->am_dead){
-                    curr->am_dead = 0;
-                    curr->ref = temp->ref;
-                    curr->file_name = temp->file_name;
-                    file_in->me_but_in_cache = curr;
-                    free(temp);
-                    ht->buckets[index]->nfiles_row++;
-                    ht->buckets[index]->num_dead--;
-                    //!LOCK RELEASED if am_dead == 1
-                     UNLOCK(&curr->mutex);
-                    return 0;
-                }
-                //!LOCK RELEASED if am_dead == 0
-                UNLOCK(&curr->mutex);
-                if(file_in->need_to_be_removed) goto delete_temp;
-                if(tail_or_head){
-                    curr = curr->prev;
-                } else curr = curr->next;
-                continue;
-            } else {
-                if(file_in->need_to_be_removed) goto delete_temp;
-                if(tail_or_head){
-                    curr = curr->prev;
-                } else curr = curr->next;
-                continue;
-            }
-        } else if((ht->incr_entr - *(curr->ref)) >= ht->buckets[index]->max_and_you_out){
-            if(file_in->need_to_be_removed) goto delete_temp;
-            if(!TRYLOCK(&curr->mutex)){
-                //!LOCK ACQUIRED
-                //rechecking the condition
-                if((ht->incr_entr - *(curr->ref)) >= ht->buckets[index]->max_and_you_out){
-                    //rechecking the first condition
-                    if(curr->am_dead){
+                    pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
+                    LOCK(UNLOCK_ME);
+                    if(!file_in->empty && string_compare(file_in->key, temp->file_name) && temp->time == file_in->time){
                         curr->am_dead = 0;
+                        MY_CACHE->nfiles++;
                         curr->ref = temp->ref;
+                        curr->me_but_in_store= file_in;
                         curr->file_name = temp->file_name;
+                        curr->time = temp->time;
                         file_in->me_but_in_cache = curr;
                         ht->buckets[index]->nfiles_row++;
                         ht->buckets[index]->num_dead--;
-                        free(temp);
                         //!LOCK RELEASED if am_dead == 1
+                        MY_CACHE->buckets[index]->threads_in--;
                         UNLOCK(&curr->mutex);
-                        return 0;
-                    } else{
-                        char *temp_fl = NULL;
-
-                        temp_fl = curr->file_name;
-                        #ifdef DEBUG
-                            assert(!curr->am_dead);
-                        #endif // DEBUG 
-                        curr->ref = temp->ref;
-                        curr->file_name = temp->file_name;
-                        file_in->me_but_in_cache = curr;
-                        temp->file_name = temp_fl;
-                        //!LOCK RELEASED if am_dead == 0 and new_ind > max_out
-                        UNLOCK(&curr->mutex);
-                        file_in = icl_hash_find(FILES_STORAGE, temp->file_name);
-                        temp->ref = &file_in->ref;
-                        int old_ind = index;
-                        index = _get_level(ht->incr_entr - *(temp->ref));
-                        #ifdef DEBUG
-                            assert(file_in != NULL);
-                        #endif // DEBUG
-                        if(file_in->need_to_be_removed) goto delete_temp;
-                        if(old_ind == index && ht->buckets[index]->num_dead <= 0)break;
-                        if(old_ind == index && ht->buckets[index]->num_dead > 0){
-                            if(tail_or_head){
-                                curr=curr->prev;
-                            } else curr = curr->next;
-                            continue;
-                        }
-                        if(get_rand_diff() < 0){
-                            tail_or_head = 1;
-                            curr = ht->buckets[index]->tail;
-                            #ifdef DEBUG
-                            assert(curr != NULL);
-                            #endif // DEBUG
-                            continue;
-                        } else {
-                            tail_or_head = 0;
-                            curr = ht->buckets[index]->head;
-                            #ifdef DEBUG
-                            assert(curr != NULL);
-                            #endif // DEBUG
-                            continue;
-                        }
-                    }
-                } else {
-                    //!LOCK RELEASED if < max_and_you_out
-                    UNLOCK(&curr->mutex);
-                    if(file_in->need_to_be_removed) goto delete_temp;
-                    if(tail_or_head){
-                        curr = curr->prev;
-                    } else curr = curr->next;
-                    continue;
-                }
-            } else {
-                if(tail_or_head){
-                    curr = curr->prev;
-                } else curr = curr->next;
-                if(file_in->need_to_be_removed) goto delete_temp;
-                continue;
-            }
-        }else if((ht->incr_entr - *(curr->ref)) < ht->buckets[index]->min_and_you_in){
-            if(!TRYLOCK(&curr->mutex)){
-                //!LOCK ACQUIRED
-                //rechecking the condition
-                if((ht->incr_entr - *(curr->ref)) < ht->buckets[index]->max_and_you_out){
-                    //rechecking the first condition
-                    if(curr->am_dead){
-                        curr->am_dead = 0;
-                        curr->ref = temp->ref;
-                        curr->file_name = temp->file_name;
-                        file_in->me_but_in_cache = curr;
-                        ht->buckets[index]->nfiles_row++;
-                        ht->buckets[index]->num_dead--;
+                        UNLOCK(UNLOCK_ME);
                         free(temp);
-                        //!LOCK RELEASED if am_dead == 1
-                        UNLOCK(&curr->mutex);
                         return 0;
-                    } else{
-                        char *temp_fl = NULL;
-                        temp_fl = curr->file_name;
-                        #ifdef DEBUG
-                            assert(curr->am_dead);
-                        #endif // DEBUG 
-                        curr->ref = temp->ref;
-                        curr->file_name = temp->file_name;
-                        file_in->me_but_in_cache = curr;
-                        temp->file_name = temp_fl;
-                        //!LOCK RELEASED if am_dead == 0 and new_ind > max_out
+                    } else {
+                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
+                        MY_CACHE->buckets[index]->threads_in--;
+                        //! LOCKS RELEASED
+                        UNLOCK(UNLOCK_ME);
                         UNLOCK(&curr->mutex);
-                        file_in = icl_hash_find(FILES_STORAGE, temp->file_name);
-                        temp->ref = &file_in->ref;
-                        int old_ind = index;
-                        index = _get_level(ht->incr_entr - *(temp->ref));
-                        #ifdef DEBUG
-                            assert(file_in != NULL);
-                        #endif // DEBUG
-                        if(old_ind == index && ht->buckets[index]->num_dead <= 0) break;
-                        if(old_ind == index && ht->buckets[index]->num_dead > 0){
-                            if(tail_or_head){
-                                curr=curr->prev;
-                            } else curr = curr->next;
-                            continue;
-                        }
-                        if(file_in->need_to_be_removed) goto delete_temp;
-                        if(get_rand_diff() < 0){
-                            tail_or_head = 1;
-                            curr = ht->buckets[index]->tail;
-                            #ifdef DEBUG
-                            assert(curr != NULL);
-                            #endif // DEBUG
-                            continue;
-                        } else {
-                            tail_or_head = 0;
-                            curr = ht->buckets[index]->head;
-                            #ifdef DEBUG
-                            assert(curr != NULL);
-                            #endif // DEBUG
-                            continue;
-                        }
+                        free(temp);
+                        return 0;
                     }
-                } else {
-                    //!LOCK RELEASED if < max_and_you_out
+                }   //!LOCK RELEASED if am_dead == 0
+                else {
                     UNLOCK(&curr->mutex);
-                    if(file_in->need_to_be_removed) goto delete_temp;
-                    if(tail_or_head){
-                        curr = curr->prev;
-                    } else curr = curr->next;
-                    continue;
                 }
-            } else {
-                if(tail_or_head){
-                    curr = curr->prev;
-                } else curr = curr->next;
-                if(file_in->need_to_be_removed) goto delete_temp;
-                continue;
             }
-        }else {
             if(tail_or_head){
-                    curr = curr->prev;
-                } else curr = curr->next;
-                if(file_in->need_to_be_removed) goto delete_temp;
+                curr = curr->prev;
+            } else curr = curr->next;
                 continue;
+
+        } else if(curr->am_dead || (ref = curr->ref != NULL ? *curr->ref : MY_CACHE->incr_entr, (ht->incr_entr - ref)) >= ht->buckets[index]->max_and_you_out){
+            if(TRYLOCK(&curr->mutex) == 0){
+                //!LOCK ACQUIRED
+                //rechecking the condition
+                    //rechecking the first condition
+                if(curr->am_dead){
+                    pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
+                    //!SECOND LOCK ACQUIRED
+                    LOCK(UNLOCK_ME);
+                    if(!file_in->empty && string_compare(file_in->key, temp->file_name) && temp->time == file_in->time){
+                        curr->am_dead = 0;
+                        MY_CACHE->nfiles = MY_CACHE->nfiles +1;
+                        ht->buckets[index]->nfiles_row++;
+                        ht->buckets[index]->num_dead--;
+                        curr->ref = temp->ref;
+                        curr->me_but_in_store= file_in;
+                        curr->file_name = temp->file_name;
+                        curr->time = temp->time;
+                        file_in->me_but_in_cache = curr;
+                        MY_CACHE->buckets[index]->threads_in--;
+                        //!LOCKS RELEASED if am_dead == 1
+                        UNLOCK(UNLOCK_ME);
+                        UNLOCK(&curr->mutex);
+                        free(temp);
+                        return 0;
+                    } else {
+                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
+                        MY_CACHE->buckets[index]->threads_in--;
+                        //!LOCKS RELEASED
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                        free(temp);
+                        return 0;
+                    }
+                } else if ((ht->incr_entr - *(curr->ref)) >= ht->buckets[index]->max_and_you_out) {
+                    char *temp_fl = NULL;
+                    icl_entry_t *temp_me = NULL;
+                    time_t temp_t = 0;
+                    pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
+                    //!LOCK ACQUIRED
+                    LOCK(UNLOCK_ME);
+                    if(!file_in->empty && string_compare(file_in->key, temp->file_name) && temp->time == file_in->time){
+                        temp_fl = curr->file_name;
+                        temp_me = curr->me_but_in_store;
+                        temp_t = curr->time;
+
+                        curr->ref = temp->ref;
+                        curr->am_dead = 0;
+                        curr->me_but_in_store= file_in;
+                        curr->file_name = temp->file_name;
+                        file_in->me_but_in_cache = curr;
+                        curr->time = temp->time;
+
+                        temp->file_name = temp_fl;
+                        temp->me_but_in_store = temp_me;
+                        temp->ref = &temp_me->ref;
+                        temp_me->me_but_in_cache = NULL;
+                        temp->time = temp_t;
+                        file_in =temp_me;
+                        //!LOCK RELEASED if am_dead == 0 and new_ind > max_out
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                    } else {
+                        MY_CACHE->buckets[index]->threads_in--;
+                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
+                        //!LOCK RELEASED
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                        free(temp);
+                        return 0;
+                    }
+                    int old_ind = index;
+                    index = _get_level(ht->incr_entr - ref);
+                    MY_CACHE->buckets[old_ind]->threads_in--;
+                    MY_CACHE->buckets[index]->threads_in++;
+                    #ifdef DEBUG
+                        assert(file_in != NULL);
+                    #endif // DEBUG
+                    if(old_ind == index && (ht->buckets[index]->num_dead - (ht->buckets[index]->threads_in-1)) <= 0){
+                        break;
+                    }
+                    if(old_ind == index && (ht->buckets[index]->num_dead - (ht->buckets[index]->threads_in-1)) > 0){
+                        if(tail_or_head){
+                            curr=curr->prev;
+                        } else curr = curr->next;
+                        continue;
+                    }
+                    if(get_rand_diff() < 0){
+                        tail_or_head = 1;
+                        curr = ht->buckets[index]->tail;
+                        #ifdef DEBUG
+                        assert(curr != NULL);
+                        #endif // DEBUG
+                        continue;
+                    } else {
+                        tail_or_head = 0;
+                        curr = ht->buckets[index]->head;
+                        #ifdef DEBUG
+                        assert(curr != NULL);
+                        #endif // DEBUG
+                        continue;
+                    }
+                    //!LOCK RELEASED if < max_and_you_out
+                } else{
+                    UNLOCK(&curr->mutex);
+                }
+            }
+            if(tail_or_head){
+                curr = curr->prev;
+            } else curr = curr->next;
+            continue;
+        }else if( curr->am_dead || (ref = curr->ref != NULL ? *curr->ref : MY_CACHE->incr_entr, (ht->incr_entr - ref)) < ht->buckets[index]->min_and_you_in) {
+            if(TRYLOCK(&curr->mutex)==0){
+                //!LOCK ACQUIRED
+                //rechecking the condition
+                 //rechecking the first condition
+                if(curr->am_dead){
+                    pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
+                    LOCK(UNLOCK_ME);
+                    if(!file_in->empty && string_compare(file_in->key, temp->file_name) && temp->time == file_in->time){
+                        curr->am_dead = 0;
+                        MY_CACHE->nfiles = MY_CACHE->nfiles +1;
+                        curr->ref = temp->ref;
+                        curr->file_name = temp->file_name;
+                        curr->me_but_in_store= file_in;
+                        curr->time = temp->time;
+                        file_in->me_but_in_cache = curr;
+                        ht->buckets[index]->nfiles_row++;
+                        ht->buckets[index]->num_dead--;
+                        //!LOCK RELEASED if am_dead == 1
+                        MY_CACHE->buckets[index]->threads_in--;
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                        pthread_mutex_destroy(&temp->mutex);
+                        free(temp);
+                        return 0;
+                    } else {
+                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
+                        MY_CACHE->buckets[index]->threads_in--;
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                        free(temp);
+                        return 0;
+                    }
+                } else if((ht->incr_entr - *(curr->ref)) < ht->buckets[index]->min_and_you_in){
+                    void *temp_fl = NULL;
+                    icl_entry_t *temp_me = NULL;
+                    time_t temp_t = 0;
+                    pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
+                    //!LOCK ACQUIRED
+                    LOCK(UNLOCK_ME);
+                    if(!file_in->empty && string_compare(file_in->key, temp->file_name) && temp->time == file_in->time){
+                        temp_fl = curr->file_name;
+                        temp_me = curr->me_but_in_store;
+                        temp_t = curr->time;
+
+                        curr->ref = temp->ref;
+                        curr->file_name = temp->file_name;
+                        curr->me_but_in_store= file_in;
+                        curr->am_dead = 0;
+                        file_in->me_but_in_cache = curr;
+                        curr->time = temp->time;
+
+                        temp->file_name = temp_fl;
+                        temp->me_but_in_store = temp_me;
+                        temp_me->me_but_in_cache = NULL;
+                        file_in = temp_me;
+                        temp->ref = &temp_me->ref;
+                        temp->time = temp_t;
+                        //! LOCKS RELEASED
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                    } else {
+                        MY_CACHE->buckets[index]->threads_in--;
+                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
+                        //!LOCKS RELEASED
+                        UNLOCK(&curr->mutex);
+                        UNLOCK(UNLOCK_ME);
+                        free(temp);
+                        return 0;
+                    }
+                    int old_ind = index;
+                    index = _get_level(ht->incr_entr - *(temp->ref));
+                    MY_CACHE->buckets[old_ind]->threads_in--;
+                    MY_CACHE->buckets[index]->threads_in++;
+                    #ifdef DEBUG
+                        assert(file_in != NULL);
+                    #endif // DEBUG
+                    //!LOCK RELEASED if am_dead == 0 and new_ind > max_out
+                    if((old_ind == (index && ht->buckets[index]->num_dead - MY_CACHE->buckets[index]->threads_in-1)) <= 0){ 
+                        break;
+                    }
+                    if((old_ind == index && ht->buckets[index]->num_dead - MY_CACHE->buckets[index]->threads_in-1) > 0){
+                        if(tail_or_head){
+                            curr=curr->prev;
+                        } else curr = curr->next;
+                        continue;
+                    }
+                    if(get_rand_diff() < 0){
+                        tail_or_head = 1;
+                        curr = ht->buckets[index]->tail;
+                        #ifdef DEBUG
+                        assert(curr != NULL);
+                        #endif // DEBUG
+                        continue;
+                    } else {
+                        tail_or_head = 0;
+                        curr = ht->buckets[index]->head;
+                        #ifdef DEBUG
+                        assert(curr != NULL);
+                        #endif // DEBUG
+                        continue;
+                    }
+                    //!LOCK RELEASED if < max_and_you_out
+                }else{
+                    UNLOCK(&curr->mutex);
+                }
+            }
         }
+        if(tail_or_head){
+            curr = curr->prev;
+        } else curr = curr->next;
+        continue;
     }
-
-
     //We should finish here if we didn't have enough space in the row
     //to insert an entry, so we give a bust to the file to fit an arbitrary row that ha an empty slot
-
-    while(index >=0 && ht->buckets[index]->num_dead <= 0) index--;
-    if(index < 0){
-        index = 0;
-        while(index < MY_CACHE->NUM_GROUP && ht->buckets[index]->num_dead <= 0) index++;
-    }
-    if(index >= MY_CACHE->NUM_GROUP){
-        fprintf(stderr, "\033[1;31mCongratulations you've discovered a bug, \033[1;37mthere was no space for a new entry that means function find victim does no work properly. There is no sense to continue. \033[1;31mI'm out.\033[0;37m\n");
-        exit(EXIT_FAILURE);
-    }
-    curr = tail_or_head == 0 ? ht->buckets[index]->head->next : ht->buckets[index]->tail->prev;
-    if(file_in->need_to_be_removed) goto delete_temp;
-    while(_till_end(&*curr, &*file_in, tail_or_head) == NULL){
-        while(index >=0 && ht->buckets[index]->num_dead <= 0) index--;
-        if(index < 0){
-            index = 0;
-            while(index < MY_CACHE->NUM_GROUP && ht->buckets[index]->num_dead <= 0) index++;
-        }
-        if(index >= MY_CACHE->NUM_GROUP){
-            fprintf(stderr, "\033[1;31mCongratulations you've discovered a bug, there is no sense to continue. I'm out.\n");
-            exit(EXIT_FAILURE);
-        }
-        if(file_in->need_to_be_removed) goto delete_temp;
-        curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
-    }
-    signed int diff = ht->incr_entr -  ht->buckets[index]->min_and_you_in;
-    file_in->ref = diff <= ~diff+1 ? 0 : diff;
-    ht->buckets[index]->nfiles_row++;
-    ht->buckets[index]->num_dead--;
-    free(temp);
-    return 0;
-    delete_temp:
-        file_in->need_to_be_removed = 0;
+    MY_CACHE->buckets[index]->threads_in--;
+    if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1){
+        find_victim(ht, ret, temp);
         free(temp);
         return 0;
+    }
+    index = _find_dead_helper(ht, index);
+    curr = tail_or_head == 0 ? ht->buckets[index]->head->next : ht->buckets[index]->tail->prev;
+
+    while((errno = 0, _till_end(curr, file_in, tail_or_head, index)) == NULL){
+        sched_yield();
+        if(errno == ENODATA){
+            free(temp);
+            return 0;
+        }
+        index = _find_dead_helper(ht, index);
+        curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
+        if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1){
+        find_victim(ht, ret, temp);
+        return 0;
+    }
+    }
+    free(temp);
+    return 0;
 }
 
 
@@ -450,18 +589,7 @@ cach_entry_t
     ht->incr_entr++;
     int index = _get_level(ht->incr_entr-file_in->ref);
     cach_entry_t *temp_ent = bind_two_tables_create_entry(&*file_in, index);
-    if(MY_CACHE->nfiles < MY_CACHE->START_INI_CACHE){
-
-        _helper_ins_rand(&*ht, temp_ent, &*file_in, index);
-    
-    } else {
-        int res = find_victim(&*ht, &*ret);
-        _helper_ins_rand(&*ht, temp_ent, &*file_in, index);
-        #ifdef DEBUG
-            assert(res == 0);
-        #endif // DEBUG
-
-    }
+    _helper_ins_rand(ht, temp_ent, file_in, index, ret);
     return NULL;
 }
 
@@ -510,48 +638,51 @@ cach_hash_dump(FILE* stream, cach_hash_t* ht)
     for(i=0; i<ht->nbuckets; i++) {
         bucket = ht->buckets[i]->head;
         if(ht->buckets[i]){
-            fprintf(stream, "ROW SUMMARY: Num_dead: %d Group: %d Max_and_you_out: %d Min_and_you_in: %d NFiles_row: %d\n", ht->buckets[i]->num_dead, ht->buckets[i]->group, ht->buckets[i]->max_and_you_out, ht->buckets[i]->min_and_you_in, ht->buckets[i]->nfiles_row);
+            fprintf(stream, "ROW SUMMARY: Num_dead: %ld Group: %d Max_and_you_out: %d Min_and_you_in: %d NFiles_row: %ld\n", ht->buckets[i]->num_dead, ht->buckets[i]->group, ht->buckets[i]->max_and_you_out, ht->buckets[i]->min_and_you_in,  ht->buckets[i]->nfiles_row);
         }
-        for(curr=bucket; curr!=NULL; ) {
-            if(!curr->am_dead && curr->file_name)
-                fprintf(stream, "cach_hash_dump: file_name: %s: ref: %lu group: %d \n", curr->file_name, *curr->ref, curr->group);
-            curr=curr->next;
+        for(curr=bucket; curr!=NULL; curr=curr->next) {
+            if(!curr->am_dead && curr->file_name){
+                fprintf(stream, "%s\n", curr->file_name);
+            }
         }
     }
-
+    fprintf(stream, "SUMMARY: nbuckets: %d nfiles: %ld\n", ht->nbuckets, ht->nfiles);
     return 0;
 }
 
 int
-_helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index){
+_helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, cach_entry_t *repl){
     while(curr != NULL){
         if(!curr->am_dead){
-            if(!TRYLOCK(&curr->mutex)){
-
+            if(TRYLOCK(&curr->mutex) == 0){
+                //!LOCK ACQUIRED
                 if(!curr->am_dead){
-                    //!LOCK ACQUIRED
-                    if((errno = 0, remove_victim(FILES_STORAGE, (void *)curr->file_name, &*ret)) == -1){
-                        //!LOCK RELEASED if victim is busy
+                    pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
+                    if(!TRYLOCK(THIS_IS_LCK)){
+                        //!LOCK ACQUIRED
+                        #ifdef DEBUG
+                        assert(string_compare(curr->file_name, curr->me_but_in_store->key));
+                        assert(string_compare(curr->me_but_in_store->me_but_in_cache->file_name, curr->file_name));
+                        #endif // DEBUG
+                        curr->am_dead = 0;
+                        curr->me_but_in_store->empty = 1;
+                        FILES_STORAGE->nentries--;
+                        ret->key = curr->me_but_in_store->key;
+                        ret->data = curr->me_but_in_store->data;
+                        curr->me_but_in_store->ref = 0;
+                        curr->me_but_in_store->am_being_used = 0;
+                        curr->me_but_in_store->me_but_in_cache = NULL;
+                        curr->me_but_in_store->time = 0;
+                        curr->file_name = repl->file_name;
+                        curr->me_but_in_store = repl->me_but_in_store;
+                        curr->ref = &repl->me_but_in_store->ref;
+                        curr->me_but_in_store->me_but_in_cache = curr;
+                        curr->time = repl->me_but_in_store->time;
+                        //!LOCK RELEASED 
+                        UNLOCK(THIS_IS_LCK);
                         UNLOCK(&curr->mutex);
-                        if(errno == ETXTBSY){
-                            if(tail_or_head){
-                                curr = curr->prev;
-                            } else curr = curr->next;
-                            continue;
-                        } else {
-                            fprintf(stderr, "In _helper_find_vic calling remove_victim. ERROR: %s\n", strerror(errno));
-                            pthread_exit(curr->file_name);
-                        }
+                        return 0;
                     }
-                    ht->nfiles--;
-                    ht->buckets[index]->nfiles_row--;
-                    ht->buckets[index]->num_dead++;
-                    curr->am_dead = 1;
-                    curr->file_name = NULL;
-                    curr->ref = NULL;
-                    //!LOCK RELEASED if victim is busy
-                    UNLOCK(&curr->mutex);
-                    return 0;
                 }
                 //!LOCK RELEASED if victim is dead
                 UNLOCK(&curr->mutex);
@@ -570,87 +701,51 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
  * @return -- 0 success, -1 failure
  */
 int
-find_victim(cach_hash_t *ht, pointers *ret){
+find_victim(cach_hash_t *ht, pointers *ret, cach_entry_t *repl){
     int check = -1;
     int index = 0;
-    int mod_ptr =  0;
-    cach_entry_t *old = NULL;
 
     index =ht->NUM_GROUP-1;
-    mod_ptr = ht->buckets[index]->nfiles_row <= 1 ? 1 : ht->buckets[index]->nfiles_row -1;
     //0 for head, 1 tail
-    while(index >= 0){
+    while(check){
         int tail_or_head = 0;
         cach_entry_t *curr = NULL;
-        int diff_p = 0;
-        int ind = 0;
-
-        curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
         tail_or_head = get_rand_diff() < 0 ? 0 : 1;
-        diff_p = ht->buckets[index]->head - ht->buckets[index]->head->next;
-        ind = get_rand() % mod_ptr;
-        old = curr;
-        if(tail_or_head){
-            curr = (curr-(ind*diff_p));
-        } else curr = curr + (ind*diff_p);
-        if((check =_helper_find_vic(curr, tail_or_head, &*ret, &*ht, index)) == -1){
-            if(tail_or_head){
-                if(old->next == NULL){ 
-                    index--;
-                    continue;
-                }
-                tail_or_head = 0;
-                curr = old - (ind*diff_p);
-                check = _helper_find_vic(curr, tail_or_head, &*ret, &*ht, index);
-            } else {
-                if(old->next == NULL){ 
-                    index--;
-                    continue;
-                }
-                tail_or_head = 1;
-                curr = old + (ind*diff_p);
-                check = _helper_find_vic(curr, tail_or_head, &*ret, &*ht, index);
-            }
-        }
-        if(check == 0) return 0;
+        curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
+        check =_helper_find_vic(curr, tail_or_head, ret, ht, index, repl);
         index--;
+        if(index < 0) index = MY_CACHE->NUM_GROUP - 1;
     }
-    #ifdef DEBUG
-        fprintf(stderr, "BUG: find_victim didn't not find a victim");
-        assert(1);
-    #endif // DEBUG
-    return -1;
+    return 0;
 }
-
 
 void print_info (cach_hash_t *ht){
-    printf("nfiles: %d size buck: %zd\n", ht->nfiles, ht->incr_entr);
+    printf("nfiles: %ld size buck: %zd\n", ht->nfiles, ht->incr_entr);
     for(int i=0; i<ht->NUM_GROUP; i++){
-        printf("group: %d num_dead: %d max_and_you_out: %d min_and_you_in: %d nfiles_row: %d \n", ht->buckets[i]->group, ht->buckets[i]->num_dead, ht->buckets[i]->max_and_you_out, ht->buckets[i]->min_and_you_in, ht->buckets[i]->nfiles_row);
+        printf("group: %d num_dead: %ld max_and_you_out: %d min_and_you_in: %d nfiles_row: %ld \n", ht->buckets[i]->group, ht->buckets[i]->num_dead, ht->buckets[i]->max_and_you_out, ht->buckets[i]->min_and_you_in, ht->buckets[i]->nfiles_row);
         for(cach_entry_t *curr = ht->buckets[i]->head; curr != NULL; curr = curr->next){
-            printf("am_dead: %d  group: %d file_name: %s \n", curr->am_dead, curr->group, curr->file_name);
+            printf("am_dead: %ld  group: %d file_name: %s \n", curr->am_dead, curr->group, curr->file_name);
         }
     }
 }
 
-//TODO:TEST IN MULTI THREADING AND ADD API REMOVE ETC
-// #ifdef DEBUG
+#ifdef DEBUG_NEW
 cach_hash_t *MY_CACHE;
 icl_hash_t *FILES_STORAGE;
 int main(int argc, char **argv){
     // cach_hash_t *ht = cach_hash_create(2, NULL);
-    #define TEST 15000
-    #define EXTRA 100000
+    #define TEST 150
+    #define EXTRA 10000
     struct Cache_settings sett;
-    sett.NUM_GROUP = 90;
-    sett.CACHE_RANGE = 2;
+    sett.NUM_GROUP = 10;
+    sett.CACHE_RANGE = 3;
     sett.START_INI_CACHE = TEST;
     sett.EXTRA_CACHE_SPACE = 0.049;
     FILES_STORAGE = NULL;
     MY_CACHE = NULL;
 
     MY_CACHE = cach_hash_create(sett, get_next_index);
-    FILES_STORAGE = icl_hash_create(sett.START_INI_CACHE, triple32, string_compare);
+    FILES_STORAGE = icl_hash_create(sett.START_INI_CACHE, hash_pjw, string_compare);
     char rand_t[TEST+EXTRA][5] = {"\0"};
     FILE *fl = fopen("cach.txt", "a+");
     FILE *fl_sto = fopen("storage.txt", "a+");
@@ -665,25 +760,32 @@ int main(int argc, char **argv){
             fprintf(stderr, "Error fatal in icl_hash_insert\n");
             pthread_exit(NULL);
         }
+        if(i > (int) TEST/2 && i % 2 == 1){
+            char *rand_rem = rand_t[lrand48() % i];
+            fprintf(fl_sto, "RANDOM SELECTED TO REMOVE: %s NFILES: %d NENTR: %d\n", rand_rem, MY_CACHE->nfiles, FILES_STORAGE->nentries);
+            icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL);
+            fprintf(fl_sto, "RANDOM SELECTED TO REMOVE AFTER: %s NFILES: %d NENTR: %d\n", rand_rem, MY_CACHE->nfiles, FILES_STORAGE->nentries);
+
+        }
         if(ret_point.key) fprintf(fl_sto, "REMOVED: %s\n", (char*)ret_point.key);
         if(i == TEST-1){
-            // fprintf(fl, "BEFORE-------------REMOVAL\n");
-            // fprintf(fl_sto, "BEFORE-------------REMOVAL\n");
-            // cach_hash_dump(fl, MY_CACHE);
-            // icl_hash_dump(fl_sto, FILES_STORAGE);
+            fprintf(fl, "BEFORE-------------REMOVAL\n");
+            fprintf(fl_sto, "BEFORE-------------REMOVAL\n");
+            cach_hash_dump(fl, MY_CACHE);
+            icl_hash_dump(fl_sto, FILES_STORAGE);
         }
     }
-    // fprintf(fl, "AFTER-------------REMOVAL\n");
-    // fprintf(fl_sto, "AFTER-------------REMOVAL\n");
-    // cach_hash_dump(fl, MY_CACHE);
-    // icl_hash_dump(fl_sto, FILES_STORAGE);
+    fprintf(fl, "AFTER-------------REMOVAL\n");
+    fprintf(fl_sto, "AFTER-------------REMOVAL\n");
+    cach_hash_dump(fl, MY_CACHE);
+    icl_hash_dump(fl_sto, FILES_STORAGE);
     fclose(fl);
     fclose(fl_sto);
     // print_storage(FILES_STORAGE);
     // print_info(MY_CACHE);
-    // printf("%d\n", MY_CACHE->nfiles);
-    // cach_hash_destroy(MY_CACHE);
-    // icl_hash_destroy(FILES_STORAGE, NULL, NULL);
+    printf("CACHE: %d-----STOR ENT: %d\n", MY_CACHE->nfiles, FILES_STORAGE->nentries);
+    cach_hash_destroy(MY_CACHE);
+    icl_hash_destroy(FILES_STORAGE, NULL, NULL);
 }
 
-// #endif // DEBUG
+#endif // DEBUG

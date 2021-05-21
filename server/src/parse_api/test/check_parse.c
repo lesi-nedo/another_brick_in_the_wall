@@ -30,25 +30,35 @@
 START_TEST(test_parse){
     char str[] = {"./test.txt"};
     char str2[] = {"./test2.txt"};
-    char available_settings[num_avail_settings][LONGEST_STR] = {"MAX_ACC_SIZE",\
-    "MAX_NUM_FILES", "WORKERS", "SOCKET_NAME", "LOG_FILE_NAME"};
     Server_conf settings[num_avail_settings];
     init_serv_conf(settings);
     init_settings_arr(settings);
     parse_file(str, settings);
     for(int i = 0; i < num_avail_settings; i++){
+        unsigned int hash_val = hash(available_settings[i])%BASE_MOD%num_avail_settings;
+        ck_assert_str_eq((char *)available_settings[i], (char *)settings[hash_val].setting);
         if(!settings[i].str_or_int){
             ck_assert(settings[i].value_string);
             free(settings[i].value_string);
-        } else ck_assert(settings[i].value);
+        } else if(settings[i].str_or_int == 1) ck_assert(settings[i].value);
+        else ck_assert(settings[i].value_float);
     }
     parse_file(str2, settings);
     for(int i = 0; i < num_avail_settings; i++){
+        unsigned int hash_val = hash(available_settings[i])%BASE_MOD%num_avail_settings;
+        ck_assert_str_eq((char *)available_settings[i], (char *)settings[hash_val].setting);
         if(!settings[i].str_or_int){
-            printf("%s\n", settings[i].value_string);
+            fflush(stdout);
             ck_assert(settings[i].value_string);
             free(settings[i].value_string);
-        } else ck_assert(settings[i].value);
+        } else if(settings[i].str_or_int == 1){
+            fflush(stdout);
+            ck_assert(settings[i].value);
+        }
+        else{
+            fflush(stdout);
+            ck_assert(settings[i].value_float);
+        }
     }
 } END_TEST
 

@@ -1,4 +1,3 @@
-
 #include <check.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,16 +50,17 @@
 static volatile sig_atomic_t sig = 0;
 icl_hash_t *FILES_STORAGE = NULL;
 cach_hash_t *MY_CACHE = NULL;
+pthread_mutex_t TO_FREE_LCK = PTHREAD_MUTEX_INITIALIZER; 
 
 
 char **create_matr(size_t row, size_t col){
-    char **to_ret = (char **)calloc(row, sizeof(char *));
+    char **to_ret = (char **)malloc(row*sizeof(char *));
     if(to_ret == NULL){
         perror("create_matr");
         pthread_exit(NULL);
     }
     for(size_t i = 0; i < row; i++){
-        to_ret[i] = (char *)calloc(col+1, sizeof(char));
+        to_ret[i] = (char *)calloc(col, sizeof(char));
     }
     return to_ret;
 }
@@ -69,10 +69,15 @@ struct thr_args {
     unsigned int sync_thr;
     FILE *fl_stor;
     FILE *fl_ca;
+    FILE *op;
+    FILE *all_deletes;
+    FILE *vict;
+    FILE *not_del;
     icl_hash_t *stor;
     cach_hash_t *cach;
-    char **to_free;
-    char **to_free2;
+    char ***to_free;
+    size_t size1;
+
 };
 
 static void sig_hand(int sign){
@@ -98,43 +103,29 @@ void* isrt_rand(void *args_th){
 
     SYSCALL_EXIT(sigprocmask, res,  sigprocmask(SIG_SETMASK, &old_m, NULL), "Nothing to do here, I'm out, \033[1;31mBye.\033[0;37m\n", NULL);
     struct thr_args *args = (struct thr_args *)args_th;
-    FILE *op = fopen("all_inserts.txt", "a");
-    FILE *all_deletes = fopen("all_delets.txt", "a");
-    FILE *not_del = fopen("not_delets.txt", "a");
-    FILE *vict = fopen("victims.txt", "a");
-    CHECK_EQ_EXIT(fopen, vict, NULL, "SEE YAAA.\n", NULL);
-    CHECK_EQ_EXIT(fopen, not_del, NULL, "SEE YAAA.\n", NULL);
-    CHECK_EQ_EXIT(fopen, op, NULL, "SEE YAAA.\n", NULL);
-    CHECK_EQ_EXIT(fopen, all_deletes, NULL, "SEE YAAA.\n", NULL);
     sleep(args->sync_thr);
     int j = 0;
     pointers ret;
     memset(&ret, 0, sizeof(pointers));
     // unsigned int rand_sleep = get_rand() % MOD_SLEEP;
     unsigned int SIZE_MA = NUM_MIN_STR + get_rand() % (NUM_MAX_STR - NUM_MIN_STR +1);
-    char **rand_t = create_matr(SIZE_MA, LENGTH_RAND_STR);
-    **rand_t ='\0';
-    char **to_del_ma = (char **)malloc((SIZE_MA+INSERT_EXTRA+4)*sizeof(char *));
-    int d_IND= 0;
-
+    char **rand_t = create_matr(SIZE_MA+1, LENGTH_RAND_STR);
     for(size_t i = 0; i < SIZE_MA; i++){
         printf("\033[1A\033[1;33m THREAD: %zd I'M Still Running-%zd\033[0;37m\033[s\n", pthread_self(), i);
         rand_string(rand_t[i], LENGTH_RAND_STR);
         //sleep(rand_sleep);
         // sleep(1);
-        fprintf(op, "%s\n", rand_t[i]);
+        fprintf(args->op, "%s\n", rand_t[i]);
         icl_hash_insert(args->stor, rand_t[i], NULL, &ret);
-        if(ret.key) fprintf(vict, "%s\n", (char *)ret.key);
-        if(ret.key) to_del_ma[d_IND++] = (char *)ret.key;
+        if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
         // rand_sleep = get_rand() % MOD_SLEEP;
         if((get_rand() % (i+1)) > ((int) TEST % (i+1))){
             char *rand_str_del = rand_t[get_rand() % (i+1)];
             // sleep(rand_sleep);
             errno = 0;
             res = icl_hash_delete_ext(args->stor, rand_str_del, NULL, NULL, &ret);
-            if(res == 0) fprintf(all_deletes, "%s\n", rand_str_del);
-            else fprintf(not_del, "%s\n", rand_str_del);
-            if(ret.key) to_del_ma[d_IND++] =(char *)ret.key;
+            if(res == 0) fprintf(args->all_deletes, "%s\n", rand_str_del);
+            else fprintf(args->not_del, "%s\n", rand_str_del);
             // rand_sleep = get_rand() % MOD_SLEEP;
         }
         if((get_rand() % (i+1)) - (get_rand() % (i+1))>0){
@@ -142,12 +133,14 @@ void* isrt_rand(void *args_th){
             icl_hash_find(FILES_STORAGE, rand_str_find);
         }
         // sleep(rand_sleep);
-        fflush(op);
+        fflush(args->op);
     }
+    *rand_t[SIZE_MA]='\0';
     char **to_ins = create_matr(INSERT_EXTRA, LENGTH_RAND_STR);
+    int si =0;
     for(;sig==0;){
         j++;
-        printf("\033[1A\033[1;33m THREAD: %zd I'M Still Running-%d\033[0;37m\033[s\n", pthread_self(), j);
+        printf("\033[1A\033[1;33mTHREAD: %zd  I'M Still Running-%d\033[0;37m\033[s\n", pthread_self(), j);
         fflush(stdout);
         // rand_sleep = get_rand() % MOD_SLEEP+3;
         if((get_rand() % (j+1)) - (get_rand() % (j+1))>0){
@@ -159,26 +152,25 @@ void* isrt_rand(void *args_th){
         if(j < INSERT_EXTRA){
             if((get_rand() ^ get_rand()) - (get_rand() ^ get_rand()) > 0){
                 // sleep(rand_sleep);
-                    rand_string(to_ins[j], LENGTH_RAND_STR);
-                    fprintf(op, "%s\n", to_ins[j]);
-                    icl_hash_insert(FILES_STORAGE, to_ins[j], NULL, &ret);
-                    if(ret.key) fprintf(vict, "%s\n", (char *)ret.key);
-                    if(ret.key) to_del_ma[d_IND++] = (char *)ret.key;
+                    rand_string(to_ins[si], LENGTH_RAND_STR);
+                    fprintf(args->op, "%s\n", to_ins[si]);
+                    icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, &ret);
+                    if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
+                    si++;
             }
             sched_yield();
         }
         // rand_sleep = get_rand() % MOD_SLEEP;
         // sleep(rand_sleep);
-
     }
     struct tm r_tm;
     time_t now = time(NULL);
     struct tm lc_tm = *localtime_r(&now, &r_tm);
     fprintf(args->fl_ca, "THREAD: %zd  HAS FINISHED ---------------------AT: %d-%02d-%02d  %02d:%02d------------------------->\n",pthread_self(), lc_tm.tm_year+1900, lc_tm.tm_mon+1, lc_tm.tm_mday, lc_tm.tm_hour, lc_tm.tm_min);
-    if(op)fclose(op);
-    if(all_deletes)fclose(all_deletes);
-    if(not_del)fclose(not_del);
-    if(vict)fclose(vict);
+    LOCK(&TO_FREE_LCK);
+    args->to_free[args->size1++]=rand_t;
+    args->to_free[args->size1++]=to_ins;
+    UNLOCK(&TO_FREE_LCK);
     return NULL;
 }
 
@@ -197,21 +189,17 @@ START_TEST(test_parse){
     MY_CACHE = cach_hash_create(sett, get_next_index);
     FILES_STORAGE = icl_hash_create(sett.START_INI_CACHE, hash_pjw, string_compare);
     char **rand_t = create_matr(SIZE_M, LENGTH_RAND_STR);
-    char **to_del_mal = (char **) malloc(SIZE_M*sizeof(char*));
     FILE *fl = fopen("cach.txt", "a+");
     FILE *fl_sto = fopen("storage.txt", "a+");
     FILE *all_deletes = fopen("all_delets.txt", "a");
-    fflush(fl);
-    fflush(fl_sto);
-    fflush(all_deletes);
-    int d_IND = 0;
+    FILE *not_del = fopen("not_delets.txt", "a");
     FILE *vict = fopen("victims.txt", "a");
-    fflush(vict);
+    FILE *op = fopen("all_inserts.txt", "a+");
+    CHECK_EQ_EXIT(fopen, op, NULL, "SEE YAAA.\n", NULL);
     CHECK_EQ_EXIT(fopen, vict, NULL, "SEE YAAA.\n", NULL);
     CHECK_EQ_EXIT(fopen, fl, NULL, "SEE YAAA.\n", NULL);
     CHECK_EQ_EXIT(fopen, fl_sto, NULL, "SEE YAAA.\n", NULL);
     CHECK_EQ_EXIT(fopen, all_deletes, NULL, "SEE YAAA.\n", NULL);
-    FILE *not_del = fopen("not_delets.txt", "a");
     CHECK_EQ_EXIT(fopen, not_del, NULL, "SEE YAAA.\n", NULL);
 
     pthread_t threads[NUM_THREADS];
@@ -222,23 +210,26 @@ START_TEST(test_parse){
     args.fl_stor = fl_sto;
     args.stor = FILES_STORAGE;
     args.cach = MY_CACHE;
+    args.not_del = not_del;
+    args.all_deletes = all_deletes;
+    args.vict = vict;
+    args.op = op;
+    args.to_free = (char ***)malloc(sizeof(char **)*((2*NUM_THREADS)+1));
     printf("\033[1;31mSTART\033[0;37m\n");
     for(size_t i = 0; i < NUM_THREADS; i++){
         SYSCALL_EXIT(pthread_create, res, pthread_create(&threads[i], NULL, isrt_rand, (void *)&args), "I'm embarrassed. Bye\n", NULL);
         args.sync_thr = NUM_THREADS-i;
 
     }
-    FILE *op = fopen("all_inserts.txt", "a+");
-    CHECK_EQ_EXIT(fopen, op, NULL, "SEE YAAA.\n", NULL);
+    
     for(size_t i=0; i < SIZE_M; i++){
-        printf("\033[1A\033[1;32m MAIN##: %zd I'M Still Running-%zd\033[0;37m\033[s\n", pthread_self(), i);
+        printf("\033[1A\033[1;32mMAIN##: %zd I'M Still Running-%zd\033[0;37m\033[s\n", pthread_self(), i);
         fflush(stdout);
         
         // sleep(ran_s+2);
         rand_string(rand_t[i], LENGTH_RAND_STR);
         fprintf(op, "%s\n", rand_t[i]);
         if((icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, &ret_point), errno = 0) != 0 && errno != EBUSY){
-            if(ret_del.key) to_del_mal[d_IND++] = (char *)ret_del.key;
             fprintf(stderr, "Error fatal in icl_hash_insert\n");
             pthread_exit(NULL);
         }
@@ -247,7 +238,6 @@ START_TEST(test_parse){
             char *rand_rem = rand_t[lrand48() % (i+1)];
             res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL, &ret_del);
             if(res == 0) fprintf(all_deletes, "%s\n", rand_rem);
-            if(ret_del.key) to_del_mal[d_IND++] = (char *)ret_del.key;
             else fprintf(not_del, "%s\n", rand_rem);
             if(res == -1 && errno == ETXTBSY) fprintf(fl_sto, "FILE BUSY: %s -------\n", rand_rem);
         }
@@ -255,7 +245,7 @@ START_TEST(test_parse){
     int allready_sended[NUM_THREADS], i =0;
     for(size_t i = 1; i < NUM_THREADS; i++) allready_sended[i] = -1;
     allready_sended[0] = get_rand() % NUM_THREADS;
-    printf("\033[1A\033[50C\033[1;32m MAIN THREAD:%zd GOES TO SLEEP\033[0;37m\033[s\n", pthread_self());
+    printf("\033[1A\033[50C\033[1;32mMAIN THREAD:%zd GOES TO SLEEP\033[0;37m\033[s\n", pthread_self());
     sleep(MAIN_THREAD_SLEEP);
     while(1){
         int rand_th = get_rand() % NUM_THREADS;
@@ -291,7 +281,6 @@ START_TEST(test_parse){
     fclose(not_del);
     fclose(vict);
     // print_storage(FILES_STORAGE);
-    printf("\033[1;38mSome of this assertions might fail because the global variables are getting incremented non atomically but for the purpose of the assignment my believe that is not critical.\033[0m\n");
     for(size_t i = 0; i <MY_CACHE->NUM_GROUP; i++){
         cach_entry_t *curr = NULL;
         int dead = 0, not_dead = 0;
@@ -328,18 +317,29 @@ START_TEST(test_parse){
         }
     }
     ck_assert_int_gt(FILES_STORAGE->nentries+empty, 0);
-
-    for(size_t i = 0; i < SIZE_M; i++){
-        char *str = rand_t[i];
-        if(str) free(str);
+    for(size_t i = 0; i< args.size1; i++){
+        int IND =0;
+        if(i % 2 == 1){
+            for(size_t j = 0; j < INSERT_EXTRA; j++){
+                free(args.to_free[i][j]);
+            }
+        } else {
+            while(*args.to_free[i][IND]!= '\0'){
+                free(args.to_free[i][IND]);
+                IND++;
+            }
+            free(args.to_free[i][IND]);
+        }
+        free(args.to_free[i]);
     }
-
-    free(to_del_mal);
+    for(size_t i = 0; i< SIZE_M; i++){
+        free(rand_t[i]);
+    }
     free(rand_t);
-    // free(args.to_free);
-    // free(args.to_free2);
+    free(args.to_free);
     cach_hash_destroy(MY_CACHE);
-    icl_hash_destroy(FILES_STORAGE, free, NULL);
+    icl_hash_destroy(FILES_STORAGE, NULL, NULL);
+    pthread_mutex_destroy(&TO_FREE_LCK);
 } END_TEST
 
 Suite *parse_suite(void){

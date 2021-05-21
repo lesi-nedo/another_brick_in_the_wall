@@ -26,7 +26,7 @@ all: $(CHECK).o
 	@printf "\033[1;35m"
 	@echo Do you want run the test with valgrind? [y/n]
 	@printf "\033[1;37m"
-	@-read  line; if [ $$line = "y" ]; then $(CK_FORK) ./$(TEST).out; printf "\033[1;33mMemory still reachable is a particular case of the framework, for more info: \033[1;32mhttps://libcheck.github.io/check/doc/check_html/check_4.html#Finding-Memory-Leaks\033[0;37m\n"; fi
+	@-read  line; if [ $$line = "y" ]; then $(CK_FORK) ./$(TEST).out; printf "\033[1;33mMemory still reachable is due to the framework, for more info: \033[1;32mhttps://libcheck.github.io/check/doc/check_html/check_4.html#Finding-Memory-Leaks\033[0;37m\n"; fi
 	@$(MAKE) --no-print-directory clean
 
 ${CHECK}.o: $(DIPEND)

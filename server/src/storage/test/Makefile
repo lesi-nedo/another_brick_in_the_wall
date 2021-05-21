@@ -32,10 +32,11 @@ all: $(TOOBJ) $(CHECK).o
 	@-${RM} *.o
 	@printf "\033[0;37m"
 	@-./$(TEST).out
+	@ $(DIFF)
 	@printf "\033[1;35m"
 	@echo "Do you want run the test with valgrind?\033[0m" [y/n]
 	@printf "\033[1;37m"
-	@-read  line; if [ $$line = "y" ]; then $(CK_FORK) ./$(TEST).out; fi
+	@-read  line; if [ $$line = "y" ]; then printf "\033[1;37m"; $(CK_FORK) ./$(TEST).out; printf "\033[1;33mMemory still reachable is due to the framework, for more info: \033[1;32mhttps://libcheck.github.io/check/doc/check_html/check_4.html#Finding-Memory-Leaks\033[0;37m\n"; fi
 	@$(MAKE) --no-print-directory clean
 
 $(TOOBJ): $(DIPEND)

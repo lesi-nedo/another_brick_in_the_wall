@@ -1,2 +1,2 @@
-# Another_brick_in_the_wall
+# Another brick in the wall
 Draft of the assignment 

@@ -56,6 +56,7 @@ struct cach_hash_s {
     long  int nfiles;
     int MAX_LAST_LEVEL;
     int START_INI_CACHE;
+    long long MAX_SPACE_AVAILABLE;
     cach_fd_t **buckets;
     unsigned int (*hash_function)(unsigned int, int);
 };
@@ -65,6 +66,7 @@ struct Cache_settings{
     int CACHE_RANGE;
     int START_INI_CACHE;
     float EXTRA_CACHE_SPACE;
+    long long SPACE_AVAILABLE;
 };
 //SETTING cache as global variable.
 extern cach_hash_t *MY_CACHE;
@@ -81,8 +83,8 @@ get_seed(pthread_t);
 unsigned long int
 get_rand();
 
-cach_entry_t
-* cach_hash_insert_bind(cach_hash_t *, icl_entry_t *, pointers *);
+int
+ cach_hash_insert_bind(cach_hash_t *, icl_entry_t *, pointers *);
 
 int
 cach_hash_destroy(cach_hash_t *),

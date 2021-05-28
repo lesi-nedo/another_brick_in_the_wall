@@ -47,9 +47,11 @@ static short is_valid_socket (char *arg, void *value){
     while(after < len_str && (isspace(*(arg+after)) || *(arg+size) == '"')) after++;
     if(after < len_str && *(arg+after) != '\n' && *(arg+after) != '\0') return 1;
     arg[size] = '\0';
-    *cast_val = (char *)calloc(size+1, sizeof(char));
-    CHECK_EQ_EXIT("Calling malloc in is_valid_string", *cast_val, NULL, "run out of memory.\n", NULL);
-    strncpy((char *)*cast_val, arg, size);
+    *cast_val = (char *)calloc(size+3, sizeof(char));
+    (*cast_val)[0] = '.';
+    (*cast_val)[1] = '/';
+    CHECK_EQ_RETURN("Calling malloc in is_valid_string", *cast_val, NULL, 1, "run out of memory.\n", NULL);
+    strncpy((char *)((*cast_val)+2), arg, size);
     return 0;
 }
 
@@ -82,7 +84,7 @@ static short is_valid_log_file (char *arg, void *value){
     if(after < len_str && *(arg+after) != '\n' && *(arg+after) != '\0') return 1;
     arg[size] = '\0';
     *cast_val = (char *)calloc(size+ext,sizeof(char));
-    CHECK_EQ_EXIT("Calling malloc in is_valid_string", *cast_val, NULL, "run out of memory.\n", NULL);
+    CHECK_EQ_RETURN("Calling malloc in is_valid_string", *cast_val, NULL, 1, "run out of memory.\n", NULL);
     strncpy((char *)*cast_val, arg, size);
     if(ext == 4){
         (*cast_val)[size] = 'l';
@@ -124,10 +126,10 @@ static short int is_valid_max_size(char *arg, void *value){
     if(to_check_next != 'b') return 1;
     switch(to_check){
         case 'm':
-            moltp = 1000;
+            moltp = 1e+6;
         break;
         case 'g':
-            moltp=1e+6;
+            moltp=1e+9;
         break;
         default:
             return 1;
@@ -138,7 +140,7 @@ static short int is_valid_max_size(char *arg, void *value){
     if(isNumber(arg, &arg_to_ass) != 0){
         return 1;
     }
-    *(long *)value = arg_to_ass * moltp;
+    *(long long *)value = arg_to_ass * moltp;
     return 0;
 }
 
@@ -300,17 +302,12 @@ void parse_file(const char *file, Server_conf *where_to_save){
         // printf("%s\n", set);
     }
     fclose(fl);
-    free(conf_line);
-    if(errno != 0){
-        
-        print_error("getline failed %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
+    if(conf_line) free(conf_line);
     if(is_error) {
             for(size_t i = 0; i< num_avail_settings; i++){
                 if(where_to_save[i].str_or_int == 1){
                     if(where_to_save[i].value_string != NULL){
-                        free(where_to_save[i].value_string);
+                        if(where_to_save[i].value_string) free(where_to_save[i].value_string);
                     }
                 }
             }

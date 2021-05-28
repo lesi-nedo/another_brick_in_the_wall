@@ -40,13 +40,14 @@ static inline int readn(long fd, void *buf, size_t size) {
  *   \retval  0   se durante la scrittura la write ritorna 0
  *   \retval  1   se la scrittura termina con successo
  */
-static inline int writen(long fd, void *buf, size_t size) {
+static inline int writen(long fd, void *buf, size_t size, int *ret) {
     size_t left = size;
     int r;
     char *bufptr = (char*)buf;
     while(left>0) {
 	if ((r=write((int)fd ,bufptr,left)) == -1) {
 	    if (errno == EINTR) continue;
+        if(ret) *ret = left;
 	    return -1;
 	}
 	if (r == 0) return 0;  

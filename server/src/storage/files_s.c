@@ -35,6 +35,7 @@ hash_pjw(void* key)
     char *datum = (char *)key;
     unsigned int hash_value, i;
 
+
     if(!datum) return 0;
 
     for (hash_value = 0; *datum; ++datum) {
@@ -52,23 +53,6 @@ int string_compare(void* a, void* b)
     return (strcmp( (char*)a, (char*)b ) == 0);
 }
 
-int msleep(long miliseconds)
-{
-   struct timespec req, rem;
-
-   if(miliseconds > 999)
-   {   
-        req.tv_sec = (int)(miliseconds / 1000);                            /* Must be Non-Negative */
-        req.tv_nsec = (miliseconds - ((long)req.tv_sec * 1000)) * 1000000; /* Must be in range of 0 to 999999999 */
-   }   
-   else
-   {   
-        req.tv_sec = 0;                         /* Must be Non-Negative */
-        req.tv_nsec = miliseconds * 1000000;    /* Must be in range of 0 to 999999999 */
-   }   
-
-   return nanosleep(&req , &rem);
-}
 
 
 
@@ -92,6 +76,10 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
     if(!ht) return NULL;
 
     ht->nentries = 0;
+    ht->max_bytes = 0;
+    ht->total_bytes =0;
+    ht->max_files = 0;
+    ht->total_victims = 0;
     ht->buckets = (icl_entry_t**)malloc(nbuckets * sizeof(icl_entry_t*));
     if(!ht->buckets) return NULL;
 
@@ -99,20 +87,36 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
     for(i=0;i<ht->nbuckets;i++){
         ht->buckets[i] = (icl_entry_t*)calloc(1,sizeof(icl_entry_t));
         if(!ht->buckets[i]){ 
+            for(size_t ind = 0; ind < i; ind++){
+                if(ht->buckets[ind]) free(ht->buckets[ind]);
+            }
+            free(ht);
             return NULL;
         }
         int res = 0;
         ht->buckets[i]->time = 0;
-        SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&(ht->buckets[i]->wr_dl_ap_lck), NULL), "This was not expected, well it is a shame maybe try again.\n", NULL);
+        if((res = pthread_mutex_init(&(ht->buckets[i]->wr_dl_ap_lck), NULL)) !=0 ||
+            (res= pthread_mutex_init(&(ht->stat_lck), NULL) != 0)){
+            fprintf(stderr, "It is a shame, boy. ERROR: %s\n", strerror(errno));
+            for(size_t ind = 0; ind < i; ind++){
+                if(ht->buckets[ind]) free(ht->buckets[ind]);
+            }
+            free(ht);
+            return NULL;
+        }
         ht->buckets[i]->key = NULL;
+        ht->buckets[i]->ptr_tail = 0;
+        ht->buckets[i]->open = 0;
         ht->buckets[i]->ref= 0;
         ht->buckets[i]->data = NULL;
         ht->buckets[i]->empty = 1;
+        ht->buckets[i]->OWNER = 0;
+        ht->buckets[i]->O_LOCK = 0;
+        ht->buckets[i]->been_modified = 0;
         ht->buckets[i]->me_but_in_cache = NULL;
         ht->buckets[i]->prev = NULL;
         ht->buckets[i]->next = NULL;
     }
-
     ht->hash_function = hash_function ? hash_function : hash_pjw;
     ht->hash_key_compare = hash_key_compare ? hash_key_compare : string_compare;
 
@@ -137,7 +141,7 @@ icl_hash_find(icl_hash_t *ht, void* key)
 
     if(!ht || !key) return NULL;
 
-    hash_val = (* ht->hash_function)(key) % ht->nbuckets;
+    hash_val = (*ht->hash_function)(key) % ht->nbuckets;
 
     for (curr=ht->buckets[hash_val]; curr != NULL; curr=curr->next){
         if (!curr->empty && ht->hash_key_compare(curr->key, key)){
@@ -158,9 +162,24 @@ icl_hash_find(icl_hash_t *ht, void* key)
  * @returns pointer to the new item.  Returns NULL on error.
  */
 
+void _reset_node(icl_entry_t *node){
+    node->empty = 1;
+    node->key = NULL;
+    node->data = NULL;
+    node->ref =0;
+    node->been_modified = 0;
+    node->OWNER = 0;
+    node->O_LOCK = 0;
+    node->ptr_tail =0;
+    node->open = 0;
+    node->am_being_used =0;
+    node->me_but_in_cache = NULL;
+    node->time =0;
+
+}
 
 icl_entry_t *
-icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
+icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointers *ret)
 {
     icl_entry_t *curr, *prev, *empty = NULL;
     pointers ret2;
@@ -176,12 +195,12 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
     THIS_IS_A_LCK = &ht->buckets[hash_val]->wr_dl_ap_lck;
     //!LOCK ACQUIRED
-    LOCK(THIS_IS_A_LCK);
+    LOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
     for (prev = NULL, curr=ht->buckets[hash_val]; curr != NULL; prev = curr, curr=curr->next){
         if (ht->hash_key_compare(curr->key, key)){
             errno = EEXIST;
             //!LOCK RELEASED
-            UNLOCK(THIS_IS_A_LCK);
+            UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
             return(NULL); /* key already exists */
         } else if(curr->empty){
             empty=curr;
@@ -190,16 +209,30 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
     }
     if(empty){
         empty->empty = 0;
+        LOCK(&ht->stat_lck);
         ht->nentries++;
+        if(data) ht->total_bytes += size_data*sizeof(uint8_t);
+        if(ht->max_files < ht->nentries) ht->max_files = ht->nentries;
+        if(ht->max_bytes < ht->total_bytes) ht->max_bytes = ht->total_bytes;
+        UNLOCK(&ht->stat_lck);
+        empty->open = 1;
         empty->key = key;
         empty->data = data;
+        empty->been_modified =0;
+        empty->ptr_tail = size_data-1;
+        empty->OWNER = 0;
+        empty->O_LOCK = 0;
         empty->me_but_in_cache = NULL;
         empty->ref = MY_CACHE->incr_entr;
         empty->time = time(NULL);
         //!LOCK RELEASED
-        UNLOCK(THIS_IS_A_LCK);
-        cach_hash_insert_bind(MY_CACHE, empty, ret);
-        return curr;
+        UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
+        res = cach_hash_insert_bind(MY_CACHE, empty, ret);
+        if(res == -1){ 
+            _reset_node(empty);
+            return NULL;
+        }
+        return empty;
     }
     /* if key was not found */
     curr = (icl_entry_t*)malloc(sizeof(icl_entry_t));
@@ -209,21 +242,35 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
 
     curr->time = time(NULL);
     curr->empty = 0;
-    SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&(curr->wr_dl_ap_lck), NULL), "This was not expected, well it is a shame maybe try again.\n", NULL);
+    SYSCALL_RETURN_FREE(pthread_mutex_init, res,  pthread_mutex_init(&(curr->wr_dl_ap_lck), NULL), NULL, curr, "This was not expected, well it is a shame maybe try again.\n", NULL);
     curr->key = key;
     curr->ref= MY_CACHE->incr_entr;
     curr->data = data;
     curr->am_being_used = 0;
+    curr->open = 0;
+    curr->been_modified = 0;
+    curr->OWNER = 0;
+    curr->O_LOCK=0;
     curr->me_but_in_cache = NULL;
+    curr->ptr_tail = size_data-1;
     curr->prev = NULL;
     curr->next = NULL;
-    ht->nentries++;
+    LOCK(&ht->stat_lck);
+        ht->nentries++;
+        if(data) ht->total_bytes += size_data*sizeof(uint8_t);
+        if(ht->max_files < ht->nentries) ht->max_files = ht->nentries;
+        if(ht->max_bytes < ht->total_bytes) ht->max_bytes = ht->total_bytes;
+    UNLOCK(&ht->stat_lck);
     //add element at the tail
     prev->next = curr;
     curr->prev = prev;
     //!LOCK RELEASED
-    UNLOCK(THIS_IS_A_LCK);
-    cach_hash_insert_bind(MY_CACHE, curr, ret);
+    UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
+    res = cach_hash_insert_bind(MY_CACHE, curr, ret);
+    if(res == -1){ 
+        _reset_node(curr);
+        return NULL;
+    }
     return curr;
 }
 
@@ -248,15 +295,14 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
     for (curr=ht->buckets[hash_val]; curr != NULL;  curr = curr->next)  {
         if (!curr->empty && ht->hash_key_compare(curr->key, key)) {
-            //!LOCK ACQUIRED
-            LOCK(&curr->wr_dl_ap_lck);
             if(curr->am_being_used){
                 errno = ETXTBSY;
-                 //!LOCK RELEASED
-                UNLOCK(&curr->wr_dl_ap_lck);
                 return -1;
             }
+            //!LOCK ACQUIRED
+            LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
             curr->empty = 1;
+            curr->open = 0;
             void *me_to = curr->key;
             ret->key = curr->key;
             ret->data = curr->data;
@@ -264,14 +310,21 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
             curr->key = NULL;
             curr->data = NULL;
             curr->me_but_in_cache = NULL;
+            LOCK(&ht->stat_lck);
             ht->nentries--;
+            if(ret->data) ht->total_bytes -= curr->ptr_tail*sizeof(uint8_t);
+            UNLOCK(&ht->stat_lck);
+            curr->OWNER =0;
+            curr->O_LOCK = 0;
+            curr->been_modified = 0;
             curr->ref = 0;
+            curr->ptr_tail = 0;
             curr->time = 0;
             //!LOCK RELEASED
-            UNLOCK(&curr->wr_dl_ap_lck);
+            UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
             //This might be problematic
             if(in_cach){
-                LOCK(&in_cach->mutex)
+                LOCK_IFN_RETURN(&in_cach->mutex, -1)
                 //!LOCK ACQUIRED
                 if(in_cach->am_dead == 0){
                     if(string_compare(me_to, in_cach->file_name)){
@@ -282,11 +335,11 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
                         in_cach->me_but_in_store = NULL;
                         MY_CACHE->nfiles--;
                         //!LOCK RELEASED
-                        UNLOCK(&in_cach->mutex);
+                        UNLOCK_IFN_RETURN(&in_cach->mutex, -1);
                         return 0;
                     }
                 }
-                UNLOCK(&in_cach->mutex);
+                UNLOCK_IFN_RETURN(&in_cach->mutex, -1);
             }
             return 0;
         }
@@ -326,7 +379,9 @@ icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(void
             curr=next;
         }
     }
-
+    if((errno = pthread_mutex_destroy(&ht->stat_lck))){
+        fprintf(stderr, "trying to destroy the lock. ERROR: %s\n", strerror(errno));
+    }
     if(ht->buckets) free(ht->buckets);
     if(ht) free(ht);
 
@@ -373,6 +428,10 @@ cach_entry_t *bind_two_tables_create_entry(icl_entry_t *node, int group){
         return NULL;
     }
     cach_entry_t *entry = (cach_entry_t *) malloc(sizeof(cach_entry_t));
+    if(entry == NULL){
+       fprintf(stderr, "Are you poor? get some memory dude, come on. In meantime I'm out.\n");
+       return NULL;
+    }
     //-1 indicates that is a temporary node
     entry->am_dead = -1;
     entry->ref = &node->ref;
@@ -386,19 +445,6 @@ cach_entry_t *bind_two_tables_create_entry(icl_entry_t *node, int group){
     return entry;
 }
 
-char *rand_string(char *str, size_t size)
-{
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK";
-    if (size) {
-        --size;
-        for (size_t n = 0; n < size; n++) {
-            int key = lrand48() % (int) (sizeof charset - 1);
-            str[n] = charset[key];
-        }
-        str[size] = '\0';
-    }
-    return str;
-}
 
 void print_storage(icl_hash_t *ht){
     for(int i=0; i< ht->nbuckets; i++){

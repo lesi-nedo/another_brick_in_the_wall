@@ -16,6 +16,8 @@
 #if !defined(BUFSIZE)
 #define BUFSIZE 256
 #endif
+#define READ 0
+#define WRITE 1
 
 #if !defined(EXTRA_LEN_PRINT_ERROR)
 #define EXTRA_LEN_PRINT_ERROR   512
@@ -37,13 +39,24 @@
 	errno = errno_copy;			\
     }
 
-#define SYSCALL_RETURN(name, r, sc, str, ...)	\
+#define SYSCALL_RETURN(name, r, sc, ret, str, ...)	\
     if ((r=sc) == -1) {				\
 	perror("\033[1;31m"#name"\033[1;37m");				\
 	int errno_copy = errno;			\
 	print_error(str, __VA_ARGS__);		\
 	errno = errno_copy;			\
-	return r;                               \
+	return ret;                               \
+    }
+
+
+#define SYSCALL_RETURN_FREE(name, r, sc, ret, to_free, str, ...)	\
+    if ((r=sc) == -1) {				\
+	perror("\033[1;31m"#name"\033[1;37m");				\
+	int errno_copy = errno;			\
+	print_error(str, __VA_ARGS__);		\
+	errno = errno_copy;		\
+  free(to_free);  \
+	return ret;                               \
     }
 
 #define CHECK_EQ_EXIT(name, X, val, str, ...)	\
@@ -53,6 +66,14 @@
 	print_error(str, __VA_ARGS__);		\
 	exit(errno_copy);			\
     }
+
+#define CHECK_EQ_RETURN(name, X, val, ret, str, ...)	\
+    if ((X)==val) {				\
+        perror("\033[1;31m"#name"\033[1;37m");				\
+	print_error(str, __VA_ARGS__);		\
+	return ret;			\
+  }
+
 
 #define CHECK_NEQ_EXIT(name, X, val, str, ...)	\
     if ((X)!=val) {				\
@@ -68,7 +89,7 @@
  *
  */
 static inline void print_error(const char * str, ...) {
-    const char err[]="\033[1;31mERROR: \033[1;37m";
+    const char err[]="\033[1;31mERROR/WARNING: \033[1;37m";
     va_list argp;
     char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
     if (!p) {
@@ -102,6 +123,46 @@ static inline int isNumber(const char* s, long* n) {
     return 0;   // successo 
   }
   return 1;   // non e' un numero
+}
+
+static inline int msleep(long miliseconds)
+{
+   struct timespec req, rem;
+
+   if(miliseconds > 999)
+   {   
+        req.tv_sec = (int)(miliseconds / 1000);                            /* Must be Non-Negative */
+        req.tv_nsec = (miliseconds - ((long)req.tv_sec * 1000)) * 1000000; /* Must be in range of 0 to 999999999 */
+   }   
+   else
+   {   
+        req.tv_sec = 0;                         /* Must be Non-Negative */
+        req.tv_nsec = miliseconds * 1000000;    /* Must be in range of 0 to 999999999 */
+   }   
+
+   return nanosleep(&req , &rem);
+}
+
+static inline char *rand_string(char *str, size_t size)
+{
+    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK";
+    if (size) {
+        long res1= 0;
+        struct drand48_data buff;
+        unsigned long seed = pthread_self()^getpid();
+        --size;
+        for (size_t n = 0; n < size; n++) {
+            seed += time(0);
+            seed ^=~clock();
+            seed -= clock();
+            srand48_r(seed, &buff);
+            lrand48_r(&buff, &res1);
+            int key = res1 % (int) (sizeof charset - 1);
+            str[n] = charset[key];
+        }
+        str[size] = '\0';
+    }
+    return str;
 }
 
 static inline int isFloat(const char* s, float* n) {
@@ -146,6 +207,10 @@ static inline int isFloat(const char* s, float* n) {
     fprintf(stderr, "ERRORE FATALE broadcast\n");			\
     pthread_exit((void*)EXIT_FAILURE);						\
   }
+  #define LOCK_IFN_RETURN(l, r)  if (pthread_mutex_lock(l)!=0)        {	\
+    fprintf(stderr, "ERRORE FATALE lock\n");				\
+    return r;								\
+  }   
 static inline int TRYLOCK(pthread_mutex_t* l) {
   int r=0;		
   if ((r=pthread_mutex_trylock(l))!=0 && r!=EBUSY) {		    
@@ -154,6 +219,10 @@ static inline int TRYLOCK(pthread_mutex_t* l) {
   }								    
   return r;	
 }
+#define UNLOCK_IFN_RETURN(l,r)    if (pthread_mutex_unlock(l)!=0)      {	\
+    fprintf(stderr, "ERRORE FATALE unlock\n");				\
+    return r;								\
+  }
 
 static inline int TRYLOCK_TIMEOUT(pthread_mutex_t* l, struct timespec *timeout) {
   int r=0;		

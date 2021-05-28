@@ -10,8 +10,7 @@
 #include <limits.h>
 #include "../../includes/thread_for_log.h"
 
-#define SOME_CONST 10 //how many times each level gets scan before stop and report a bug
-#define BOOST 0.75 //has to be between 0 and 1
+#define SOME_CONST 50 //how many times each level gets scan before stop and report a bug
 
 unsigned int get_next_index(unsigned int key, int NUM_GROUP){
 
@@ -43,7 +42,14 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
     ht->buckets = (cach_fd_t**)malloc(sett.NUM_GROUP * sizeof(cach_fd_t*));
     for(size_t i=0; i<sett.NUM_GROUP; i++){ 
         ht->buckets[i] =(cach_fd_t*)malloc(sizeof(cach_fd_t));
-        CHECK_EQ_EXIT(malloc, ht->buckets[i], NULL, "I'm out, bye.\n", NULL);
+        if(ht->buckets[i] == NULL){
+            for(size_t ind = 0; ind < i; i++){
+                free(ht->buckets[ind]);
+            }
+            free(ht);
+            fprintf(stderr, "Get some more memory and then come back.\n");
+            return NULL;
+        }
     }
     if(!ht->buckets) return NULL;
     ht->nbuckets = sett.NUM_GROUP;
@@ -52,6 +58,7 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
     ht->MAX_LAST_LEVEL = sett.NUM_GROUP*sett.CACHE_RANGE;
     ht->nfiles = 0;
     ht->START_INI_CACHE = sett.START_INI_CACHE;
+    ht->MAX_SPACE_AVAILABLE = sett.SPACE_AVAILABLE;
     extr = (int) (sett.START_INI_CACHE*sett.EXTRA_CACHE_SPACE);;
     for(i=0;i<ht->NUM_GROUP;i++){
         ht->buckets[i]->group = i;
@@ -60,7 +67,14 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
         ht->buckets[i]->nfiles_row = 0;
         ht->buckets[i]->num_dead = 0;
         ht->buckets[i]->threads_in = 0;
-        SYSCALL_EXIT(pthread_mutex_init, res,  pthread_mutex_init(&(ht->buckets[i]->mutex_for_cleanup), NULL), "This was not expected, well it is a shame maybe try again.\n", NULL);
+        if((res =pthread_mutex_init(&(ht->buckets[i]->mutex_for_cleanup), NULL)) != 0){
+            for(size_t ind = 0; ind < i; i++){
+                free(ht->buckets[ind]);
+            }
+            free(ht);
+            fprintf(stderr, "Au revoir. ERROR: %s\n", strerror(res));
+            return NULL;
+        }
         ht->buckets[i]->min_and_you_in = sett.CACHE_RANGE*i;
         ht->buckets[i]->max_and_you_out = sett.CACHE_RANGE*(i+1);
     }
@@ -68,14 +82,23 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
         if(i == ht->NUM_GROUP*pos_row) pos_row++;
         unsigned int hashed = i % ht->NUM_GROUP;
         cach_entry_t *to_ins = (cach_entry_t *)malloc(sizeof(cach_entry_t));
-        CHECK_EQ_EXIT(malloc, to_ins, NULL, "I'm out, maybe try again, bye\n", NULL);
+        if(to_ins == NULL){
+            cach_hash_destroy(ht);
+            fprintf(stderr, "Jeez, bro get some extra memory cause we ain't got no more of that.\n");
+            return NULL;
+        }
         to_ins->am_dead = 1;
         to_ins->ref = NULL;
         to_ins->group = hashed;
         to_ins->me_but_in_store = NULL;
         to_ins->file_name = NULL;
         to_ins->time = 0;
-        SYSCALL_EXIT(pthread_mutex_init, res, pthread_mutex_init(&to_ins->mutex, NULL), "Wasn't my fault, however I'm sorry <3 <3\n", NULL);
+        if((res=pthread_mutex_init(&to_ins->mutex, NULL)) != 0){
+            cach_hash_destroy(ht);
+            fprintf(stderr, "Wasn't my fault, however I'm sorry <3 <3. ERROR: %s\n", strerror(res));
+            free(to_ins);
+            return NULL;
+        }
         to_ins->next = NULL;
         to_ins->prev = NULL;
         if(ht->buckets[hashed]->head == NULL){ 
@@ -223,7 +246,7 @@ int _find_dead_helper(cach_hash_t *ht, int index){
     int min_or_plu = 0;
     int limit = 0;
     while(limit<SOME_CONST){
-        if((ht->buckets[index]->num_dead)- ht->buckets[index]->threads_in > 0){
+        if((ht->buckets[index]->num_dead)- (ht->buckets[index]->threads_in-1) > 0){
             return index;
         }
         if(!min_or_plu){
@@ -242,15 +265,7 @@ int _find_dead_helper(cach_hash_t *ht, int index){
             limit++;
         }
     }
-    FILE *open = fopen("error.txt", "a");
-    CHECK_EQ_EXIT(fopen, open, NULL, "\nSorry Not sorry but I'm out. love to you <3\n", NULL);
-    fprintf(stderr, "\033[1;31mERROR:\033[0;37m \033[1;96mCould not find a level which has a free spot, this should not have happened. You'll find last status of cache and storage in \033[1;35merror.txt\033[0;37m\n");
-    icl_hash_dump(open, FILES_STORAGE);
-    cach_hash_dump(open, MY_CACHE);
-    fflush(open);
-    fclose(open);
-    exit(EXIT_FAILURE);
-    return 0;
+    return -1;
 }
 /**
  * @param curr -- starting point from which will be searched
@@ -268,15 +283,9 @@ int
     if(ht == NULL || temp == NULL || file_in == NULL){
         fprintf(stderr, "\033[1;31mFatal ERROR\033[1;37m in _helper_ins_rand, one of the argument is null, congratulation your code has a bug.\033[0;37m\n");
         MY_CACHE->buckets[index]->threads_in--;
-        exit(EXIT_FAILURE);
+        return -1;
     }
-     #ifdef DEBUG
-    assert(string_compare(temp->file_name, file_in->key));
-    assert(string_compare(temp->me_but_in_store->key, file_in->key));
-    assert(string_compare(temp->me_but_in_store->me_but_in_cache->file_name, temp->file_name));
-    #endif // DEBUG
     while(curr != NULL){
-        fflush(stdout);
         if(curr->am_dead){
             //JUMPS TO THE END BECAUSE WE NEED TO DELETE TEMP
             if(TRYLOCK(&curr->mutex) == 0){
@@ -452,7 +461,6 @@ int
                         MY_CACHE->buckets[index]->threads_in--;
                         UNLOCK(&curr->mutex);
                         UNLOCK(UNLOCK_ME);
-                        pthread_mutex_destroy(&temp->mutex);
                         free(temp);
                         return 0;
                     } else {
@@ -546,12 +554,17 @@ int
     //We should finish here if we didn't have enough space in the row
     //to insert an entry, so we give a bust to the file to fit an arbitrary row that ha an empty slot
     MY_CACHE->buckets[index]->threads_in--;
-    if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1){
+    if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1 || FILES_STORAGE->total_bytes >= MY_CACHE->MAX_SPACE_AVAILABLE){
         find_victim(ht, ret, temp);
         free(temp);
         return 0;
     }
     index = _find_dead_helper(ht, index);
+    if(index == -1){
+        find_victim(ht, ret, temp);
+        free(temp);
+        return 0;
+    };
     curr = tail_or_head == 0 ? ht->buckets[index]->head->next : ht->buckets[index]->tail->prev;
 
     while((errno = 0, _till_end(curr, file_in, tail_or_head, index)) == NULL){
@@ -561,9 +574,11 @@ int
             return 0;
         }
         index = _find_dead_helper(ht, index);
+        if(index == -1) return -1;
         curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
-        if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1){
+        if(index == -1 || MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1 || FILES_STORAGE->total_bytes >= MY_CACHE->MAX_SPACE_AVAILABLE){
         find_victim(ht, ret, temp);
+        free(temp);
         return 0;
     }
     }
@@ -582,14 +597,21 @@ int
  *
  * @returns pointer to the new item.  Returns NULL on error.
  */
-cach_entry_t
-* cach_hash_insert_bind(cach_hash_t *ht, icl_entry_t *file_in, pointers *ret)
+
+int cach_hash_insert_bind(cach_hash_t *ht, icl_entry_t *file_in, pointers *ret)
 {
     ht->incr_entr++;
     int index = _get_level(ht->incr_entr-file_in->ref);
     cach_entry_t *temp_ent = bind_two_tables_create_entry(&*file_in, index);
-    _helper_ins_rand(ht, temp_ent, file_in, index, ret);
-    return NULL;
+    if(temp_ent == NULL){
+        return -1;
+    }
+   int res =  _helper_ins_rand(ht, temp_ent, file_in, index, ret);
+   if(res == -1){
+        return -1;
+   }
+   return 0;
+
 }
 
 int
@@ -659,19 +681,26 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                     pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
                     if(!TRYLOCK(THIS_IS_LCK)){
                         //!LOCK ACQUIRED
-                        #ifdef DEBUG
-                        assert(string_compare(curr->file_name, curr->me_but_in_store->key));
-                        assert(string_compare(curr->me_but_in_store->me_but_in_cache->file_name, curr->file_name));
-                        #endif // DEBUG
                         curr->am_dead = 0;
                         curr->me_but_in_store->empty = 1;
+                        if(curr->me_but_in_store->been_modified){
+                            ret->key = curr->me_but_in_store->key;
+                            ret->data = curr->me_but_in_store->data;
+                        }
+                        LOCK(&FILES_STORAGE->stat_lck);
                         FILES_STORAGE->nentries--;
-                        ret->key = curr->me_but_in_store->key;
-                        ret->data = curr->me_but_in_store->data;
+                        FILES_STORAGE->total_victims++;
+                        if(ret->data) FILES_STORAGE->total_bytes -= curr->me_but_in_store->ptr_tail*sizeof(uint8_t);
+                        UNLOCK(&FILES_STORAGE->stat_lck);
                         curr->me_but_in_store->ref = 0;
                         curr->me_but_in_store->am_being_used = 0;
                         curr->me_but_in_store->me_but_in_cache = NULL;
+                        curr->me_but_in_store->OWNER = 0;
+                        curr->me_but_in_store->O_LOCK = 0;
+                        curr->me_but_in_store->ptr_tail = 0;
+                        curr->me_but_in_store->open = 0;
                         curr->me_but_in_store->time = 0;
+                        curr->me_but_in_store->been_modified = 0;
                         curr->file_name = repl->file_name;
                         curr->me_but_in_store = repl->me_but_in_store;
                         curr->ref = &repl->me_but_in_store->ref;
@@ -701,7 +730,7 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
  */
 int
 find_victim(cach_hash_t *ht, pointers *ret, cach_entry_t *repl){
-    int check = -1;
+    volatile int check = -1;
     int index = 0;
 
     index =ht->NUM_GROUP-1;

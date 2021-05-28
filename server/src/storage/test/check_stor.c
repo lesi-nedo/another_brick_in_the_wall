@@ -33,17 +33,17 @@
 //! I DID NOT TAKE IN CONSIDERATION THAT SOME OF THIS VALUE MIGHT CRASH THE
 //! PROGRAM, SO IF YOU WANT TO CHANGE IT FEEL FREE BUT THE PROGRAM MIGHT FAIL.
 #define MOD_SLEEP 1 //this is gets the range which will be used in sleep i.e random_number % MOD_SLEEP
-#define NUM_MIN_STR 1 //this number is a lower bounder for how many value will be inserted
-#define NUM_MAX_STR 10 //this number is a upper bounder for how many value will be inserted
+#define NUM_MIN_STR 10 //this number is a lower bounder for how many value will be inserted
+#define NUM_MAX_STR 100 //this number is a upper bounder for how many value will be inserted
 #define LENGTH_RAND_STR 5 //This is the length of the random string to be inserted
 #define TEST 34 //HOW MANY FILES
 #define EXTRA 2000 // This value for the main thread, it specifying how many extra strings will be inserted i.e TEST+EXTRA
-#define NUM_THREADS 9 //number of running threads
+#define NUM_THREADS 90 //number of running threads
 #define MAIN_THREAD_SLEEP 20 //for how long main thread will go to sleep before calling pthread_kill with signal SIGQUIT
 #define INCREMENT_THIS 10000 //this value is for the library timeout
 #define NUM_GROUP_M 10 //this is for number of levels in cache
 #define CACHE_RANGE_M 4 //this is the range in which will be inserted entries in a specific level
-#define EXTRA_CACHE_SPACE_M 0.09 //extra space
+#define EXTRA_CACHE_SPACE_M 0 //extra space
 #define INSERT_EXTRA 20 //this value is for infinite loop in which threads will be executing inserts, search and deletes
 #define clear() printf("\033[H\033[J")
 #define gotoxy(x,y) printf("\033[%d;%dH", (y), (x))
@@ -116,7 +116,7 @@ void* isrt_rand(void *args_th){
         //sleep(rand_sleep);
         // sleep(1);
         fprintf(args->op, "%s\n", rand_t[i]);
-        icl_hash_insert(args->stor, rand_t[i], NULL, &ret);
+        icl_hash_insert(args->stor, rand_t[i], NULL, 0, &ret);
         if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
         // rand_sleep = get_rand() % MOD_SLEEP;
         if((get_rand() % (i+1)) > ((int) TEST % (i+1))){
@@ -154,7 +154,7 @@ void* isrt_rand(void *args_th){
                 // sleep(rand_sleep);
                     rand_string(to_ins[si], LENGTH_RAND_STR);
                     fprintf(args->op, "%s\n", to_ins[si]);
-                    icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, &ret);
+                    icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, 0, &ret);
                     if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
                     si++;
             }
@@ -182,6 +182,7 @@ START_TEST(test_parse){
     sett.CACHE_RANGE = CACHE_RANGE_M;
     sett.START_INI_CACHE = TEST;
     sett.EXTRA_CACHE_SPACE = EXTRA_CACHE_SPACE_M;
+    sett.SPACE_AVAILABLE = 100000;
 
     pointers ret_point;
     pointers ret_del;
@@ -229,7 +230,7 @@ START_TEST(test_parse){
         // sleep(ran_s+2);
         rand_string(rand_t[i], LENGTH_RAND_STR);
         fprintf(op, "%s\n", rand_t[i]);
-        if((icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, &ret_point), errno = 0) != 0 && errno != EBUSY){
+        if((icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, 0, &ret_point), errno = 0) != 0 && errno != EBUSY){
             fprintf(stderr, "Error fatal in icl_hash_insert\n");
             pthread_exit(NULL);
         }

@@ -27,12 +27,12 @@ COV_NAM=test_store
 .SUFFIXES: .c .o
 
 all: $(TOOBJ) $(CHECK).o
-	@printf "\033[1;35mThis may take a while, have a coffee or tea :).\033[1;34mIf you see an error: Test timeout expired, just go to check_stor.c and \033[1;36mINCREMENT_THIS\033[1;34m then rerrun and enjoy another coffee.\033[0;37m\n"
+	@printf "\033[1;35mThis may take a while, have a coffee or tea :).\033[1;34mIf you see an error: Test timeout expired, just go to check_stor.c and \033[1;36mINCREMENT_THIS\033[1;34m then rerrun and enjoy another coffee.\033[0;37m\033[1;31mSome of the assertions might fail because of pthread_kill.\033[0;37m\n"
 	@$(CC)  $(DEBUG) $^ $(LIBS) -o $(TEST).out
 	@-${RM} *.o
 	@printf "\033[0;37m"
 	@-./$(TEST).out
-	@ $(DIFF)
+	@-$(DIFF)
 	@printf "\033[1;35m"
 	@echo "Do you want run the test with valgrind?\033[0m" [y/n]
 	@printf "\033[1;37m"

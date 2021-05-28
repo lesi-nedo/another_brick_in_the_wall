@@ -23,6 +23,11 @@ struct icl_entry_s {
     void* key;
     void *data;
     unsigned long int ref;
+    int been_modified;
+    size_t OWNER;
+    int O_LOCK;
+    int ptr_tail;
+    int open;
     long int am_being_used;
     pthread_mutex_t wr_dl_ap_lck;
     struct icl_entry_s* next;
@@ -35,7 +40,12 @@ struct icl_entry_s {
 
 struct icl_hash_s {
     int nbuckets;
-    unsigned long int nentries;
+    pthread_mutex_t stat_lck;
+    long int nentries;
+    long int max_files;
+    long int total_victims;
+    long long int total_bytes;
+    long long int max_bytes;
     icl_entry_t **buckets;
     unsigned int (*hash_function)(void*);
     int (*hash_key_compare)(void*, void*);
@@ -49,7 +59,7 @@ icl_entry_t
 * icl_hash_find(icl_hash_t *, void* );
 
 icl_entry_t
-* icl_hash_insert(icl_hash_t *, void*, void *, pointers *);
+* icl_hash_insert(icl_hash_t *, void*, void *, size_t, pointers *);
 
 int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
@@ -57,7 +67,6 @@ icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
 
 int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*), pointers * );
 
-int msleep(long);
 
 /* compare function */
 int 
@@ -67,7 +76,6 @@ unsigned int
 hash_pjw(void*);
 
 cach_entry_t  *bind_two_tables_create_entry(icl_entry_t *, int);
-char *rand_string(char *, size_t);
 void print_storage(icl_hash_t *);
 
 #define icl_hash_foreach(ht, tmpint, tmpent, kp, dp)    \

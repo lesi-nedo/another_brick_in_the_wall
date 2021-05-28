@@ -10,7 +10,7 @@
 typedef struct {
     //if set to 1 then a signal to creator of the thread has arrived ⦟
     //it needs to exit.
-    int sign;
+    volatile int sign;
     char *file_name;
     int pipe[2];
 } Arg_log_th;

@@ -15,7 +15,7 @@
 
 extern const unsigned  char available_settings[num_avail_settings][LONGEST_STR];
 typedef struct {
-    unsigned long int value;
+    long long int value;
     float value_float;
     //0 string as argument 1 number  as argument, 2 a float
     unsigned short int str_or_int;

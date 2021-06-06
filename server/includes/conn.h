@@ -1,7 +1,7 @@
 #if !defined(CONN_H)
 #define CONN_H
 
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define SOCKNAME     "./cs_sock"
 #define MAXBACKLOG   32
 
 /** Evita letture parziali
@@ -40,7 +39,7 @@ static inline int readn(long fd, void *buf, size_t size) {
  *   \retval  0   se durante la scrittura la write ritorna 0
  *   \retval  1   se la scrittura termina con successo
  */
-static inline int writen(long fd, void *buf, size_t size, int *ret) {
+static inline int writen(long fd, void *buf, size_t size, size_t *ret) {
     size_t left = size;
     int r;
     char *bufptr = (char*)buf;

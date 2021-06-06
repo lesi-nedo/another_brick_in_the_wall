@@ -6,7 +6,9 @@
 #include <sys/time.h>
 #include <sys/epoll.h>
 
-
+#define IS_NOT_ERROR 0
+#define IS_ERROR 1
+#define IS_EMPTY 2
 #define MAX_LOG 64
 #define MAX_FDS 16*1024
 #define SENDBUFF_SIZE 1024
@@ -28,6 +30,7 @@
 #define MAX_EVENTS 64
 #define O_CREATE_M 1
 #define O_LOCK_M 2
+#define ID_START 200
 
 extern char *SOCK_NAME;
 extern int sock_fd;
@@ -38,6 +41,7 @@ extern size_t LOCK_ID;
 typedef struct {
     int state;
     size_t response;
+    size_t is_error;
     void *sendbuff;
     int sendbuff_end;
     int sendptr;
@@ -57,5 +61,6 @@ int modify_event(int, int, int);
 int openConnection(const char *, int, const struct timespec);
 int openFile(const char *, int);
 int closeConnection(const char *);
-
+int readFile(const char*, void **, size_t *);
+int helper_receive(void **buff, size_t *size);
 #endif // !API_SOCK_H

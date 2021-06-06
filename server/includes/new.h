@@ -17,6 +17,8 @@ extern "C" {
 struct pass_pointers {
     void *key;
     void *data;
+    size_t size_data;
+    int was_here;
 };
 
 struct cach_entry_s {

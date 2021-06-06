@@ -683,10 +683,12 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         //!LOCK ACQUIRED
                         curr->am_dead = 0;
                         curr->me_but_in_store->empty = 1;
-                        if(curr->me_but_in_store->been_modified){
-                            ret->key = curr->me_but_in_store->key;
-                            ret->data = curr->me_but_in_store->data;
-                        }
+                        ret->was_here =curr->me_but_in_store->been_modified;
+                        ret->key = curr->me_but_in_store->key;
+                        curr->me_but_in_store->key = NULL;
+                        ret->data = curr->me_but_in_store->data;
+                        curr->me_but_in_store->data = NULL;
+                        ret->size_data = curr->me_but_in_store->ptr_tail+1;
                         LOCK(&FILES_STORAGE->stat_lck);
                         FILES_STORAGE->nentries--;
                         FILES_STORAGE->total_victims++;
@@ -791,7 +793,7 @@ int main(int argc, char **argv){
         if(i > (int) TEST/2 && i % 2 == 1){
             char *rand_rem = rand_t[lrand48() % i];
             fprintf(fl_sto, "RANDOM SELECTED TO REMOVE: %s NFILES: %d NENTR: %d\n", rand_rem, MY_CACHE->nfiles, FILES_STORAGE->nentries);
-            icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL);
+            icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL, 0);
             fprintf(fl_sto, "RANDOM SELECTED TO REMOVE AFTER: %s NFILES: %d NENTR: %d\n", rand_rem, MY_CACHE->nfiles, FILES_STORAGE->nentries);
 
         }

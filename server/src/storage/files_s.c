@@ -139,7 +139,10 @@ icl_hash_find(icl_hash_t *ht, void* key)
     icl_entry_t* curr;
     unsigned int hash_val;
 
-    if(!ht || !key) return NULL;
+    if(!ht || !key) {
+        errno =EINVAL;
+        return NULL;
+    }
 
     hash_val = (*ht->hash_function)(key) % ht->nbuckets;
 
@@ -197,7 +200,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
     //!LOCK ACQUIRED
     LOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
     for (prev = NULL, curr=ht->buckets[hash_val]; curr != NULL; prev = curr, curr=curr->next){
-        if (ht->hash_key_compare(curr->key, key)){
+        if (!curr->empty && ht->hash_key_compare(curr->key, key)){
             errno = EEXIST;
             //!LOCK RELEASED
             UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
@@ -221,7 +224,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
         empty->been_modified =0;
         empty->ptr_tail = size_data-1;
         empty->OWNER = 0;
-        empty->O_LOCK = 0;
+        empty->O_LOCK = 1;
         empty->me_but_in_cache = NULL;
         empty->ref = MY_CACHE->incr_entr;
         empty->time = time(NULL);
@@ -249,8 +252,8 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
     curr->am_being_used = 0;
     curr->open = 0;
     curr->been_modified = 0;
-    curr->OWNER = 0;
-    curr->O_LOCK=0;
+    curr->open = 1;
+    curr->O_LOCK= 1;
     curr->me_but_in_cache = NULL;
     curr->ptr_tail = size_data-1;
     curr->prev = NULL;
@@ -284,7 +287,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
  *
  * @returns 0 on success, -1 on failure.
  *///TODO: CHANGE THE WAY YOUDELETE AN ELEMENT FROM TABLE
-int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*), pointers *ret)
+int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*), pointers *ret, size_t ID_CLIENT)
 {
     icl_entry_t *curr;
     unsigned int hash_val;
@@ -295,17 +298,24 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
     for (curr=ht->buckets[hash_val]; curr != NULL;  curr = curr->next)  {
         if (!curr->empty && ht->hash_key_compare(curr->key, key)) {
-            if(curr->am_being_used){
+            if(curr->am_being_used || curr->open){
                 errno = ETXTBSY;
                 return -1;
             }
             //!LOCK ACQUIRED
             LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
+            if(curr->O_LOCK && curr->OWNER != ID_CLIENT){
+                //!LOCK RELEASED
+                UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
+                errno=EPERM;
+                return -1;
+            }
             curr->empty = 1;
             curr->open = 0;
             void *me_to = curr->key;
             ret->key = curr->key;
             ret->data = curr->data;
+            ret->size_data = curr->ptr_tail+1;
             cach_entry_t *in_cach = curr->me_but_in_cache;
             curr->key = NULL;
             curr->data = NULL;
@@ -450,11 +460,15 @@ void print_storage(icl_hash_t *ht){
     for(int i=0; i< ht->nbuckets; i++){
         icl_entry_t *curr;
         if(ht->buckets[i] != NULL) {
+            int yes =0;
             for (curr=ht->buckets[i]; curr != NULL;){
-            printf("%s->", (char *)curr->key);
-            curr=curr->next;
+                if(!curr->empty){
+                    yes =1;
+                    printf("%s->", (char *)curr->key);
+                }
+                curr=curr->next;
             }
-            printf("\n");
+            if(yes) printf("\n");
         } else printf("NULL\n");
 
     }
@@ -488,11 +502,11 @@ void print_delte_rand(icl_hash_t *ht){
         if(ht->buckets[i + rand() % (ht->nbuckets - i)]){
             for(curr=ht->buckets[i + rand() % (ht->nbuckets - i)]; curr != NULL; ){
                 if(curr->next == NULL){
-                    icl_hash_delete_ext(ht, curr->key, NULL, NULL, &ret);
+                    icl_hash_delete_ext(ht, curr->key, NULL, NULL, &ret, 0);
                     break;
                 } else {
                     if(((rand() % 5) ^ 3) ) continue;
-                    icl_hash_delete_ext(ht, curr->next->key, NULL, NULL, &ret);
+                    icl_hash_delete_ext(ht, curr->next->key, NULL, NULL, &ret, 0);
                 }
                 curr = curr->next;
             }

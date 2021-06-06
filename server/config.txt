@@ -22,5 +22,5 @@ CACHE_NUM_LEVELS=16
 #must be > 1
 CACHE_RANGE=2
 #This value gets multiplied by MAX_NUM_FILES to create extra space in cache 
-#hopefully for better performance. (from test it emerged that this value has to be small)
+#hopefully for better performance.
 EXTRA_CACHE_SPACE=0.05

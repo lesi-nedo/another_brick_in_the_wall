@@ -26,7 +26,7 @@ struct icl_entry_s {
     int been_modified;
     size_t OWNER;
     int O_LOCK;
-    int ptr_tail;
+    size_t ptr_tail;
     int open;
     long int am_being_used;
     pthread_mutex_t wr_dl_ap_lck;
@@ -65,7 +65,7 @@ int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
-int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*), pointers * );
+int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*), pointers *, size_t );
 
 
 /* compare function */

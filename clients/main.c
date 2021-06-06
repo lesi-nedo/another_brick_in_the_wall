@@ -27,7 +27,8 @@ int main (int argc, char **argv){
     }
     rand_string(rand_str, 5);
     printf("%s\n", rand_str);
-    res = openFile(rand_str, O_CREATE_M);
+    res = openFile(rand_str, O_LOCK_M | O_CREATE_M);
+    
     if(res==-1){
         closeConnection(path);
         exit(EXIT_FAILURE);

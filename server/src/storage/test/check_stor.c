@@ -116,14 +116,18 @@ void* isrt_rand(void *args_th){
         //sleep(rand_sleep);
         // sleep(1);
         fprintf(args->op, "%s\n", rand_t[i]);
-        icl_hash_insert(args->stor, rand_t[i], NULL, 0, &ret);
+        icl_entry_t *curr = icl_hash_insert(args->stor, rand_t[i], NULL, 0, &ret);
+        if(curr!= NULL){
+            curr->O_LOCK = 0;
+            curr->open =0;
+        }
         if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
         // rand_sleep = get_rand() % MOD_SLEEP;
         if((get_rand() % (i+1)) > ((int) TEST % (i+1))){
             char *rand_str_del = rand_t[get_rand() % (i+1)];
             // sleep(rand_sleep);
             errno = 0;
-            res = icl_hash_delete_ext(args->stor, rand_str_del, NULL, NULL, &ret);
+            res = icl_hash_delete_ext(args->stor, rand_str_del, NULL, NULL, &ret,0);
             if(res == 0) fprintf(args->all_deletes, "%s\n", rand_str_del);
             else fprintf(args->not_del, "%s\n", rand_str_del);
             // rand_sleep = get_rand() % MOD_SLEEP;
@@ -154,7 +158,11 @@ void* isrt_rand(void *args_th){
                 // sleep(rand_sleep);
                     rand_string(to_ins[si], LENGTH_RAND_STR);
                     fprintf(args->op, "%s\n", to_ins[si]);
-                    icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, 0, &ret);
+                    icl_entry_t *curr = icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, 0, &ret);
+                    if(curr!= NULL){
+                        curr->O_LOCK = 0;
+                        curr->open =0;
+                    }
                     if(ret.key) fprintf(args->vict, "%s\n", (char *)ret.key);
                     si++;
             }
@@ -224,20 +232,25 @@ START_TEST(test_parse){
     }
     
     for(size_t i=0; i < SIZE_M; i++){
+        icl_entry_t*curr = NULL;
         printf("\033[1A\033[1;32mMAIN##: %zd I'M Still Running-%zd\033[0;37m\033[s\n", pthread_self(), i);
         fflush(stdout);
         
         // sleep(ran_s+2);
         rand_string(rand_t[i], LENGTH_RAND_STR);
         fprintf(op, "%s\n", rand_t[i]);
-        if((icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, 0, &ret_point), errno = 0) != 0 && errno != EBUSY){
+        if((curr =icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, 0, &ret_point), errno = 0) != 0 && errno != EBUSY){
             fprintf(stderr, "Error fatal in icl_hash_insert\n");
             pthread_exit(NULL);
+        }
+        if(curr!= NULL){
+            curr->O_LOCK = 0;
+            curr->open =0;
         }
         if(ret_point.key) fprintf(vict, "%s\n", (char *)ret_point.key);
         if(i > (int) (TEST % (i+1))/2 && i % 2 == 1){
             char *rand_rem = rand_t[lrand48() % (i+1)];
-            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL, &ret_del);
+            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL, &ret_del, 0);
             if(res == 0) fprintf(all_deletes, "%s\n", rand_rem);
             else fprintf(not_del, "%s\n", rand_rem);
             if(res == -1 && errno == ETXTBSY) fprintf(fl_sto, "FILE BUSY: %s -------\n", rand_rem);

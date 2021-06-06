@@ -225,7 +225,7 @@ int main (int argc, char **argv){
                     goto THATS_ALL_FOLKS;
                 }
             } else{
-                int n = 0;
+                size_t n = 0;
                 while((writen(my_bi.pipe_ready_fd[WRITE], &events[i].data.fd, sizeof(events[i].data.fd), &n)) < 0){
                     if(errno != EAGAIN && errno != EWOULDBLOCK){
                         print_error("Our path ends here, have a nice life.\n",NULL);
@@ -249,8 +249,6 @@ THATS_ALL_FOLKS:
     sig_teller = 1;
     sched_yield();
     printf("\n");
-    //TODO: YOU NEED TO UPDATE A FLAG IN THE HASH TABLE TO 1 SO IT TELLS THAT FILE IS PRESENT 
-    //TODO: BUT NOT YET ALLOCATED
     ARG_LOG_TH.sign = 1;
     close(ARG_LOG_TH.pipe[WRITE]);
     kill_those_bi(&my_bi);
@@ -265,6 +263,10 @@ THATS_ALL_FOLKS:
         if(fl_stor) fclose(fl_stor);
         if(fl_cach) fclose(fl_cach);
     }
+    printf("\033[1;95mMaximum number of files: \033[1;37m %ld\033[0;37m\n", FILES_STORAGE->max_files);
+    printf("\033[1;35mMaximum number of bytes: \033[1;37m %lld\033[0;37m\n", FILES_STORAGE->max_bytes);
+    printf("\033[1;35mNumber of times replacement algorithm was called: \033[1;37m %ld\033[0;37m\n", FILES_STORAGE->total_victims);
+    print_storage(FILES_STORAGE);
     cach_hash_destroy(MY_CACHE);
     icl_hash_destroy(FILES_STORAGE, free, free);
     free(events);

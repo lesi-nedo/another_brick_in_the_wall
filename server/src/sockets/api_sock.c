@@ -115,6 +115,7 @@ int modify_event(int ep_fd, int fd, int state){
  * @param sock_fd: socket file descriptor to get data from
  * @param buff: where to save data
  * @param size: the size of data to be read
+ * @return 1 on success, 0 closed server, -1 error
  */
 int read_from(int ep_fd ,int sock_fd, void *buff, int size){
     int n = 0;
@@ -165,7 +166,6 @@ int write_to(int ep_fd, int sock_fd, void *buff, int len){
 
 int _ready_for(){
     int nready = 0;
-
     nready = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
     if(nready<0){
         print_error("Hey boy I hit a breaking point.\nerrno: %s", strerror(errno));
@@ -181,6 +181,10 @@ int _ready_for(){
 
 int _helper_send(const char *pathname, size_t *ret){
     size_t to_wrt = 0;
+    //resp[0] if 1 then it went something wrong and in resp[1] will be save errno value 
+    size_t resp[2];
+    resp[0]=0;
+    resp[1]=0;
     int res = 0;
 
     assert(_ready_for() & EPOLLOUT);
@@ -191,15 +195,33 @@ int _helper_send(const char *pathname, size_t *ret){
     modify_event(epoll_fd, sock_fd, EPOLLIN);
     assert(_ready_for() & EPOLLIN);
     to_wrt = 1;
-    res= read_from(epoll_fd, sock_fd, &to_wrt, sizeof(to_wrt));
+    res= read_from(epoll_fd, sock_fd, resp, sizeof(resp));
     if(res == -1) return -1;
-    if(to_wrt == 0){
-        errno = EINVAL;
-        print_error("Pass some better arguments, Boss.\nopenFile: %s\n", strerror(errno));
+    if(resp[0] == IS_ERROR){
+        print_error("Pass some better arguments, Boss.\nError: %s\n", strerror(resp[1]));
         return -1;
     }
-    *ret = to_wrt;
+    *ret = resp[1];
     return 0;
+}
+
+int helper_receive(void **buff, size_t *size){
+    int res = 0;
+    size_t resp[2];
+    resp[0]=0;
+    resp[1]=0;
+    assert(_ready_for() & EPOLLIN);
+    res = read_from(epoll_fd, sock_fd, resp, sizeof(resp));
+    if(res < 1) return res;
+    if(resp[0] == IS_ERROR){
+        errno =resp[1];
+        return -1;
+    }
+    *size=resp[1];
+    assert(*size > 0);
+    *buff=(void *)calloc(*size, sizeof(uint8_t));
+    res =read_from(epoll_fd, sock_fd, *buff, *size);
+    return res;
 }
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime){
@@ -289,4 +311,27 @@ int openFile(const char *pathname, int flags){
     fprintf(fl, "%zd", LOCK_ID);
     fclose(fl);
     return 0;
+}
+
+
+
+int readFile(const char*pathname, void **buff, size_t *size){
+    size_t to_wrt_ID[2];
+    int res = 0;
+    to_wrt_ID[0] = READ_F;
+    to_wrt_ID[1] = LOCK_ID;
+    res = write_to(epoll_fd, sock_fd, &to_wrt_ID, sizeof(to_wrt_ID));
+    if(res == -1){
+        return -1;
+    }
+    res=_helper_send(pathname, &LOCK_ID);
+    if(res == -1) return -1;
+    res = helper_receive(buff, size);
+    if(res == 1){
+        return 0;
+    } else if(res == 0){
+        errno = EOWNERDEAD;
+        return -1;
+    }
+    return -1;
 }

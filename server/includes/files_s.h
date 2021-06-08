@@ -41,6 +41,7 @@ struct icl_entry_s {
 struct icl_hash_s {
     int nbuckets;
     pthread_mutex_t stat_lck;
+    long long int MAX_SPACE_AVAILABLE;
     long int nentries;
     long int max_files;
     long int total_victims;

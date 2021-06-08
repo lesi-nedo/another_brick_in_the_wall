@@ -19,18 +19,19 @@
 #define READ_F 3
 #define READ_NF 4
 #define WRITE_F 5
-#define APPEND_F 6
-#define LOCK_F 7
-#define UNLOCK_F 8
-#define COSE_F 9
-#define REMOVE_F 10
-#define CLOS_CON 11
-#define NUM_AP 12
+#define LOCK_F 6
+#define UNLOCK_F 7
+#define CLOSE_F 8
+#define REMOVE_F 9
+#define NUM_AP 10
 #define NOT_OK_M 0
 #define MAX_EVENTS 64
 #define O_CREATE_M 1
 #define O_LOCK_M 2
 #define ID_START 200
+#if !defined(NAME_MAX)
+#define NAME_MAX 256
+#endif
 
 extern char *SOCK_NAME;
 extern int sock_fd;
@@ -48,8 +49,6 @@ typedef struct {
 } conn_state_t;
 
 
-extern conn_state_t global_state[MAX_FDS];
-
 int ini_sock(char *);
 int non_blocking(int lis_fd);
 int ini_sock_client(const char *);
@@ -63,4 +62,9 @@ int openFile(const char *, int);
 int closeConnection(const char *);
 int readFile(const char*, void **, size_t *);
 int helper_receive(void **buff, size_t *size);
+int readNFiles(int , const char *);
+char* cwd();
+char *get_full_path(char *, size_t );
+int writeFile(const char *pathname, const char *dirname);
+int appendToFile(const char* pathname, void *data, size_t size, const char* dirname);
 #endif // !API_SOCK_H

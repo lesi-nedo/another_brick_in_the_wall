@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <libgen.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +77,7 @@ int non_blocking(int lis_fd){
  */
 int delete_event(int ep_fd, int fd, int state){
     struct epoll_event event;
+    memset(&event, 0, sizeof(struct epoll_event));
     event.events = state;
     event.data.fd = fd;
     if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, fd, &event) < 0)
@@ -90,6 +92,7 @@ int delete_event(int ep_fd, int fd, int state){
  */
 int add_event(int ep_fd, int fd, int state){
     struct epoll_event event;
+    memset(&event, 0, sizeof(struct epoll_event));
     event.events = state;
     event.data.fd = fd;
     if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, fd, &event) < 0)
@@ -104,6 +107,7 @@ int add_event(int ep_fd, int fd, int state){
 
 int modify_event(int ep_fd, int fd, int state){
     struct epoll_event event;
+    memset(&event, 0, sizeof(struct epoll_event));
     event.events = state;
     event.data.fd = fd;
     if(epoll_ctl(ep_fd, EPOLL_CTL_MOD, fd, &event) < 0)
@@ -119,18 +123,16 @@ int modify_event(int ep_fd, int fd, int state){
  */
 int read_from(int ep_fd ,int sock_fd, void *buff, int size){
     int n = 0;
-    while((n= readn(sock_fd, buff, size))==-1){
-        if(errno != EAGAIN && errno != EWOULDBLOCK){
-            print_error("Here something stranger has happened, I'll let you figure it out. t.v.b\n errno:%s\n", strerror(errno));
-            delete_event(ep_fd, sock_fd, EPOLLIN);
-            close(sock_fd);
-            return -1;
-        }
+    n= readn(sock_fd, buff, size, NULL);
+    if(n < -1){
+        print_error("Hun, an error occured \nerrno: %s\n", strerror(errno));
+        delete_event(ep_fd, sock_fd, EPOLLIN);
+        return -1;
     }
     if(n==0){
         print_error("Hun, server was closed, are you sad now?\nerrno: %s\n", strerror(errno));
         delete_event(ep_fd, sock_fd, EPOLLIN);
-        return 0;
+        return -1;
     }
     return 1;
 
@@ -145,13 +147,12 @@ int read_from(int ep_fd ,int sock_fd, void *buff, int size){
 int write_to(int ep_fd, int sock_fd, void *buff, int len){
     int n =0;
 
-    while((n =writen(sock_fd, buff, len, NULL)) == -1){
-        if(errno != EAGAIN && errno != EWOULDBLOCK){
-            print_error("Buddy, I was trying to read from socket and I failed. Do not be mad <3\nerrno: %s\n", strerror(errno));
-            delete_event(ep_fd, sock_fd, EPOLLOUT);
-            close(sock_fd);
-            return -1;
-        }
+    n =writen(sock_fd, buff, len, NULL);
+    if(n < 0){
+        print_error("Buddy, I was trying to read from socket and I failed. Do not be mad <3\nerrno: %s\n", strerror(errno));
+        delete_event(ep_fd, sock_fd, EPOLLOUT);
+        close(sock_fd);
+        return -1;
     }
     if(n == 0){
         print_error("Hun, server was closed, are you sad now (I failed in write_to)?\nerrno: %s\n", strerror(errno));
@@ -187,17 +188,15 @@ int _helper_send(const char *pathname, size_t *ret){
     resp[1]=0;
     int res = 0;
 
-    assert(_ready_for() & EPOLLOUT);
     to_wrt = strlen(pathname)+1;
     res = write_to(epoll_fd, sock_fd, &to_wrt, sizeof(to_wrt));
-    assert(_ready_for() & EPOLLOUT);
     res = write_to(epoll_fd, sock_fd, (void *)pathname, to_wrt);
     modify_event(epoll_fd, sock_fd, EPOLLIN);
     assert(_ready_for() & EPOLLIN);
     to_wrt = 1;
     res= read_from(epoll_fd, sock_fd, resp, sizeof(resp));
     if(res == -1) return -1;
-    if(resp[0] == IS_ERROR){
+    if(resp[0] != IS_NOT_ERROR){
         print_error("Pass some better arguments, Boss.\nError: %s\n", strerror(resp[1]));
         return -1;
     }
@@ -205,21 +204,41 @@ int _helper_send(const char *pathname, size_t *ret){
     return 0;
 }
 
+int _helper_send_data(void *data, size_t len){
+    int res =0;
+    size_t resp[2] = {0};
+    res = write_to(epoll_fd, sock_fd, &len, sizeof(len));
+    modify_event(epoll_fd, sock_fd, EPOLLIN);
+    assert(_ready_for() & EPOLLIN);
+    res = read_from(epoll_fd, sock_fd, resp, sizeof(resp));
+    if(res == -1) return -1;
+    if( resp[0]!= IS_NOT_ERROR){
+        errno =resp[1];
+        return -1;
+    }
+    modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    assert(_ready_for() & EPOLLOUT);
+    res = write_to(epoll_fd, sock_fd, data, len);
+    return res;
+}
+
 int helper_receive(void **buff, size_t *size){
     int res = 0;
     size_t resp[2];
     resp[0]=0;
     resp[1]=0;
-    assert(_ready_for() & EPOLLIN);
     res = read_from(epoll_fd, sock_fd, resp, sizeof(resp));
     if(res < 1) return res;
-    if(resp[0] == IS_ERROR){
+    if(resp[0] != IS_NOT_ERROR){
         errno =resp[1];
         return -1;
     }
     *size=resp[1];
     assert(*size > 0);
-    *buff=(void *)calloc(*size, sizeof(uint8_t));
+    *buff=(void *)calloc(*size, sizeof(u_int8_t));
+    if(buff  == NULL){
+        return -1;
+    }
     res =read_from(epoll_fd, sock_fd, *buff, *size);
     return res;
 }
@@ -269,22 +288,10 @@ int openFile(const char *pathname, int flags){
         errno = EINVAL;
         return -1;
     }
-    FILE *fl = fopen("my_id.txt", "w");
-    if(fl == NULL){
-        print_error("With tears in the eyes I have to announce I failed to open.\nerrno: %s\n", strerror(errno));
-        return -1;
-    }
-    int nready = 0;
     size_t to_wrt_ID[2];
     to_wrt_ID[0] = 0;
     to_wrt_ID[1] = LOCK_ID;
     int res =0;
-
-        nready = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
-        if(nready<0){
-            print_error("Hey boy I hit a breaking point.\nerrno: %s", strerror(errno));
-            return -1;
-        }
     assert(_ready_for() & EPOLLOUT);
     switch (flags) {
         case O_CREATE_M:
@@ -307,25 +314,58 @@ int openFile(const char *pathname, int flags){
         return -1;
     }
     res=_helper_send(pathname, &LOCK_ID);
-    if(res == -1) return -1;
-    fprintf(fl, "%zd", LOCK_ID);
-    fclose(fl);
-    return 0;
+    return res;
+}
+/**
+ * This function was taken from esercitazione n.10
+ */
+char* cwd() {
+  char* buf = malloc(NAME_MAX*sizeof(char));
+  if (!buf) {
+    perror("cwd malloc");
+    return NULL;
+  }
+  if (getcwd(buf, NAME_MAX) == NULL) {
+    if (errno==ERANGE) {
+      char* buf2 = realloc(buf, 2*NAME_MAX*sizeof(char));
+      if (!buf2) {
+	perror("cwd realloc");
+	free(buf);
+	return NULL;
+      }
+      buf = buf2;
+      if (getcwd(buf,2*NAME_MAX)==NULL) { 
+	free(buf);
+	return NULL;
+      }
+    } else {
+      free(buf);
+      return NULL;
+    }
+  }
+  return buf;
 }
 
 
-
 int readFile(const char*pathname, void **buff, size_t *size){
+    if(pathname==NULL || buff==NULL || size==NULL){
+        errno = EINVAL;
+        return -1;
+    }
     size_t to_wrt_ID[2];
     int res = 0;
     to_wrt_ID[0] = READ_F;
     to_wrt_ID[1] = LOCK_ID;
+    modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    assert(_ready_for() & EPOLLOUT);
     res = write_to(epoll_fd, sock_fd, &to_wrt_ID, sizeof(to_wrt_ID));
     if(res == -1){
         return -1;
     }
     res=_helper_send(pathname, &LOCK_ID);
     if(res == -1) return -1;
+    modify_event(epoll_fd, sock_fd, EPOLLIN);
+    assert(_ready_for() & EPOLLIN);
     res = helper_receive(buff, size);
     if(res == 1){
         return 0;
@@ -334,4 +374,263 @@ int readFile(const char*pathname, void **buff, size_t *size){
         return -1;
     }
     return -1;
+}
+
+int readNFiles(int N, const char *dirname){
+    if(dirname==NULL){
+        errno = EINVAL;
+        return -1;
+    }
+    char *curr_dir = cwd();
+    char *file_name = NULL;
+    void *buff = NULL;
+    size_t size =0;
+    size_t to_wrt_N = 0;
+    if(N <= 0){
+        to_wrt_N = 0;
+    }
+    size_t to_wrt_ID[2];
+    int res = 0;
+    to_wrt_ID[0] = READ_NF;
+    to_wrt_ID[1] = LOCK_ID;
+    modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    res = write_to(epoll_fd, sock_fd, &to_wrt_ID, sizeof(to_wrt_ID));
+    if(res == -1){
+        free(curr_dir);
+        return -1;
+    }
+    if(chdir(dirname) ==-1){
+        free(curr_dir);
+        return -1;
+    }
+    res = write_to(epoll_fd, sock_fd, &to_wrt_N, sizeof(to_wrt_N));
+    if(res == -1){
+        free(curr_dir);
+        return -1;
+    }
+    modify_event(epoll_fd, sock_fd, EPOLLIN);
+    assert(_ready_for() & EPOLLIN);
+    while(helper_receive((void**)&file_name, &size) > 0){
+        char *name = basename(file_name);
+        FILE *f = fopen(name, "w");
+        if(f == NULL){
+            free(curr_dir);
+            free(file_name);
+            return -1;
+        }
+        res = helper_receive(&buff, &size);
+        if(res < 1){
+            if(buff) free(buff);
+            free(curr_dir);
+            free(file_name);
+            fclose(f);
+            return -1;
+        }
+        fprintf(f, "%s", (char*)buff);
+        fclose(f);
+        free(buff);
+        free(file_name);
+        buff =NULL;
+        file_name=NULL;
+    }
+    if(file_name) free(file_name);
+    if(chdir(curr_dir)==-1){
+        free(curr_dir);
+    }
+    free(curr_dir);
+    if(errno != 0) return -1;
+    return 0;
+}
+
+int _helper_victim_save(const char *dirname){
+    char *name_victim =NULL;
+    int res =0;
+    size_t size_victim = 0;
+    void *data_victim = NULL;
+    char *curr_dir = cwd();
+    if(curr_dir == NULL){
+            return -1;
+    }
+    if(chdir(dirname)==-1){
+        free(curr_dir);
+        return -1;
+    }
+   while((res= helper_receive((void**)&name_victim, &size_victim)) != -1){
+        res =helper_receive(&data_victim, &size_victim);
+        if(res == -1){
+            if(data_victim) free(data_victim);
+            free(name_victim);
+            free(curr_dir);
+            return -1;
+        }
+        char *name = basename(name_victim);
+        FILE *fp= fopen(name,"w");
+        if(fp == NULL){
+            free(name_victim);
+            free(data_victim);
+            free(curr_dir);
+            return -1;
+        }
+        res = fwrite(data_victim,sizeof(u_int8_t), size_victim, fp);
+        if(res != size_victim){
+            free(name_victim);
+            free(data_victim);
+            free(curr_dir);
+            fclose(fp);
+            return -1;
+        }
+        
+        free(name_victim);
+        free(data_victim);
+        fclose(fp);
+   }
+   if(chdir(curr_dir)==-1){
+        free(curr_dir);
+        return -1;
+    }
+    if(res == -1 && errno > 0){
+        free(curr_dir);
+        if(name_victim) free(name_victim);
+        return -1;
+    }
+    free(curr_dir);
+    return 0;
+}
+
+int _helper_victim(){
+    char *name_victim =NULL;
+    int res =0;
+    size_t size_victim = 0;
+    void *data_victim = NULL;
+    while((res= helper_receive((void**)&name_victim, &size_victim)) != -1){
+    res =helper_receive(&data_victim, &size_victim);
+    if(res == -1){
+        if(data_victim) free(data_victim);
+        free(name_victim);
+        return -1;
+    }
+    free(name_victim);
+    free(data_victim);
+    }
+    if(res == -1 && errno > 0){ 
+        if(name_victim) free(name_victim);
+        return -1;
+    }
+    return 0;
+}
+
+int appendToFile(const char* pathname, void *data, size_t size, const char* dirname){
+    if(pathname == NULL || data == NULL || size <= 0){
+        print_error("Pass some better arguments to appendFile, bro.\n", NULL);
+        errno =EINVAL;
+        return -1;
+    }
+    int res = 0;
+    size_t to_wrt_ID[2];
+    to_wrt_ID[0] = WRITE_F;
+    to_wrt_ID[1] = LOCK_ID;
+    res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    if(res == -1){
+        return -1;
+    }
+    assert(_ready_for() & EPOLLOUT);
+    res = write_to(epoll_fd, sock_fd, &to_wrt_ID, sizeof(to_wrt_ID));
+    if(res == -1){
+        return -1;
+    }
+    size_t my_id = 0;
+    res = _helper_send(pathname, &my_id);
+    if(res == -1){
+        return -1;
+    }
+    #ifdef DEBUG
+    assert(LOCK_ID == my_id);
+    #endif // DEBUG
+    res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    if(res == -1){
+        return -1;
+    }
+    assert(_ready_for() & EPOLLOUT);
+    res = _helper_send_data(data, size);
+    if(res == -1) return -1;
+    modify_event(epoll_fd, sock_fd, EPOLLIN);
+    assert(_ready_for() & EPOLLIN);
+    if(dirname) res = _helper_victim_save(dirname);
+    else res = _helper_victim();
+    return res;
+}
+
+int writeFile(const char *pathname, const char *dirname){
+    if(pathname == NULL){
+        errno =EINVAL;
+        return -1;
+    }
+    long size = 0;
+    int res = 0;
+    void *data = NULL;
+    FILE *fp = fopen(pathname, "r");
+    if(fp == NULL) return -1;
+    res = fseek(fp, 0, SEEK_END);
+    size = ftell(fp);
+    if(size == -1) return -1;
+    if(size == 0){
+        errno = EINVAL;
+        return -1;
+    }
+    res = fseek(fp, 0, SEEK_SET);
+    data = calloc(size, sizeof(u_int8_t));
+    if(data == NULL || res == -1){
+        return -1;
+    }
+    res = fread(data, 1, size, fp);
+    fclose(fp);
+    if(res != size){
+        free(data);
+        return -1;
+    }
+    res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    if(res == -1){
+        free(data);
+        return -1;
+    }
+    res = openFile(pathname, O_CREATE_M | O_LOCK_M);
+    if(res == -1){
+        free(data);
+        return -1;
+    }
+    res = modify_event(epoll_fd, sock_fd, EPOLLIN);
+    if(res == -1){
+        free(data);
+        return -1;
+    }
+    assert(_ready_for() & EPOLLIN);
+    if(dirname) res = _helper_victim_save(dirname);
+    else res = _helper_victim();
+    if(res == -1){ 
+        free(data);
+        return -1;
+    }
+    res= appendToFile(pathname, data, size, dirname);
+    free(data);
+    return res;
+}
+
+char *get_full_path(char *file, size_t size){
+    char *curr_dir = cwd();
+    if(curr_dir == NULL){
+        return NULL;
+    }
+    size_t null_at = 0;
+    char* buf2 = realloc(curr_dir, (NAME_MAX+size+1)*sizeof(char));
+    if(buf2 == NULL){
+        print_error("Boss I failed with error: %s \n", strerror(errno));
+        free(curr_dir);
+        return NULL;
+    }
+    curr_dir = buf2;
+    null_at =strcspn(curr_dir, "\0");
+    curr_dir[null_at]='/';
+    curr_dir[null_at+1]='\0';
+    strncat(curr_dir, file, size);
+    return curr_dir;
 }

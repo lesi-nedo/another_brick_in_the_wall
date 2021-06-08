@@ -16,7 +16,6 @@
 #include <sys/types.h>
 #include <fcntl.h>
 
-conn_state_t global_state[MAX_FDS];
 Arg_log_th ARG_LOG_TH;
 cach_hash_t *MY_CACHE;
 icl_hash_t *FILES_STORAGE;
@@ -66,6 +65,7 @@ void cache_init_sett(Server_conf settings[], struct Cache_settings *sett){
 
 int main (int argc, char **argv){
     int res =0;
+    int color = 35;
     int total_con = 0;
     int listener_fd = 0;;
     int ep_fd = 0;
@@ -106,6 +106,7 @@ int main (int argc, char **argv){
     if(FILES_STORAGE == NULL || MY_CACHE == NULL){
         exit(EXIT_FAILURE);
     }
+    FILES_STORAGE->MAX_SPACE_AVAILABLE= cach_set.SPACE_AVAILABLE;
     my_bi.num_thr = all_settings[hash(available_settings[2])%BASE_MOD%num_avail_settings].value;
     my_bi.pimp = pthread_self();
     my_bi.time_to_quit = &sig_teller;
@@ -164,8 +165,13 @@ int main (int argc, char **argv){
         goto THATS_ALL_FOLKS;
     }
     while(sig_teller != 1 && ( sig_teller==0 || (sig_teller== 2 && total_con > 0))){
+        printf("\033[1;31mWAITING    \033[0;37m\033[s\n");
+        printf("\033[1A");
         int nready = epoll_wait(ep_fd, events, MAX_FDS, -1);
         for(int i =0; i < nready; i++){
+            printf("\033[1;%dmI'M RUNNING\033[0;37m\033[s\n", color);
+            printf("\033[1A");
+            color = color ==35? 36 : 35;
             int new_sc = 0;
             if((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) ||
             !(events[i].events & EPOLLIN)){
@@ -192,11 +198,8 @@ int main (int argc, char **argv){
                     continue;
                 }
                 non_blocking(new_sc);
+                dprintf(ARG_LOG_TH.pipe[WRITE], "New Connection: %d\n", new_sc);
                 struct epoll_event event = {0};
-                global_state[new_sc].state = EPOLLIN;
-                global_state[new_sc].sendbuff_end = 0;
-                global_state[new_sc].sendptr = 0;
-                global_state[new_sc].response = -1;
                 event.data.fd = new_sc;
                 event.events = EPOLLIN;
                 total_con++;
@@ -208,10 +211,10 @@ int main (int argc, char **argv){
             } else if(events[i].data.fd == my_bi.pipe_done_fd[READ]){
                 int to_add_fd = 0;
                 int n =0;
-                while((n = readn(my_bi.pipe_done_fd[READ], &to_add_fd, sizeof(int)))>0){
+                while((n = read(my_bi.pipe_done_fd[READ], &to_add_fd, sizeof(int)))>0){
                     struct epoll_event event = {0};
                     event.data.fd = to_add_fd;
-                    event.events = global_state[to_add_fd].state;
+                    event.events = EPOLLIN;
                     total_con++;
                     if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, to_add_fd, &event) < 0){
                         print_error("Hey dandy, don't be mad but I ran into a problem.\n", NULL);
@@ -225,13 +228,11 @@ int main (int argc, char **argv){
                     goto THATS_ALL_FOLKS;
                 }
             } else{
-                size_t n = 0;
-                while((writen(my_bi.pipe_ready_fd[WRITE], &events[i].data.fd, sizeof(events[i].data.fd), &n)) < 0){
-                    if(errno != EAGAIN && errno != EWOULDBLOCK){
-                        print_error("Our path ends here, have a nice life.\n",NULL);
-                        res = errno;
-                        goto THATS_ALL_FOLKS;
-                    }
+                res =writen(my_bi.pipe_ready_fd[WRITE], &events[i].data.fd, sizeof(events[i].data.fd), &sig_teller);
+                if(res < 0){
+                    print_error("Our path ends here, have a nice life.\n",NULL);
+                    res = errno;
+                    goto THATS_ALL_FOLKS;
                 }
                 total_con--;
                 if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) < 0){
@@ -247,6 +248,7 @@ int main (int argc, char **argv){
 
 THATS_ALL_FOLKS:
     sig_teller = 1;
+    dprintf(ARG_LOG_TH.pipe[WRITE],"TOTAL FILES IN STORE: %ld\n", FILES_STORAGE->nentries);
     sched_yield();
     printf("\n");
     ARG_LOG_TH.sign = 1;
@@ -265,6 +267,7 @@ THATS_ALL_FOLKS:
     }
     printf("\033[1;95mMaximum number of files: \033[1;37m %ld\033[0;37m\n", FILES_STORAGE->max_files);
     printf("\033[1;35mMaximum number of bytes: \033[1;37m %lld\033[0;37m\n", FILES_STORAGE->max_bytes);
+    printf("\033[1;35mCurrent number of bytes: \033[1;37m %lld\033[0;37m\n", FILES_STORAGE->total_bytes);
     printf("\033[1;35mNumber of times replacement algorithm was called: \033[1;37m %ld\033[0;37m\n", FILES_STORAGE->total_victims);
     print_storage(FILES_STORAGE);
     cach_hash_destroy(MY_CACHE);

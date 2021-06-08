@@ -18,6 +18,8 @@
  */
 void *log_to_file(void *arg_th){
     Arg_log_th *args = (Arg_log_th *)arg_th;
+    char buff_pipe[BUFSIZE];
+    memset(buff_pipe, 0, sizeof(buff_pipe));
     struct stat st;
     volatile int res =0;
     //Creates if not present a directory called logs
@@ -37,7 +39,8 @@ void *log_to_file(void *arg_th){
     snprintf(path, size, "%s%s", LOGS, args->file_name);
     mode_t preced = umask(0033);
     //opens or creates file for logs
-    FILE *fl_log = fopen(path, "a+");
+    FILE *fl_log = NULL;
+    fl_log = fopen(path, "a+");
     CHECK_EQ_EXIT(fopen, fl_log, NULL, "Could not open or create log file, I'm out.\n", NULL);
     umask(preced);
     int fd_log = 0;
@@ -51,8 +54,6 @@ void *log_to_file(void *arg_th){
     fprintf(fl_log, "<-------------------------USER: %s  DATE START: %d-%02d-%02d  %02d:%02d------------------------->\n",user, lc_tm.tm_year+1900, lc_tm.tm_mon+1, lc_tm.tm_mday, lc_tm.tm_hour, lc_tm.tm_min);
     fflush(fl_log);
     while(!args->sign || res != 0){
-        char buff_pipe[BUFSIZE];
-        memset(&buff_pipe, 0, BUFSIZE);
         if((errno = 0, res = read(args->pipe[READ], buff_pipe, BUFSIZE)) == -1) {
             fprintf(stderr, "\033[1;31mread has failed\033[0;37m:%s\n", strerror(errno));
             break;

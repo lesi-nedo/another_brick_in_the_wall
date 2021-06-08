@@ -57,7 +57,7 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
     ht->CACHE_RANGE = sett.CACHE_RANGE;
     ht->MAX_LAST_LEVEL = sett.NUM_GROUP*sett.CACHE_RANGE;
     ht->nfiles = 0;
-    ht->START_INI_CACHE = sett.START_INI_CACHE;
+    ht->START_INI_CACHE = sett.START_INI_CACHE > sett.NUM_GROUP? sett.START_INI_CACHE: sett.NUM_GROUP; ;
     ht->MAX_SPACE_AVAILABLE = sett.SPACE_AVAILABLE;
     extr = (int) (sett.START_INI_CACHE*sett.EXTRA_CACHE_SPACE);;
     for(i=0;i<ht->NUM_GROUP;i++){
@@ -674,7 +674,10 @@ cach_hash_dump(FILE* stream, cach_hash_t* ht)
 int
 _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, cach_entry_t *repl){
     while(curr != NULL){
-        if(!curr->am_dead){
+        if(!curr->am_dead && !curr->me_but_in_store->am_being_used){
+            #ifdef DEBUG
+            assert(curr->me_but_in_store->am_being_used >= 0);
+            #endif // DEBUG
             if(TRYLOCK(&curr->mutex) == 0){
                 //!LOCK ACQUIRED
                 if(!curr->am_dead){
@@ -683,8 +686,9 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         //!LOCK ACQUIRED
                         curr->am_dead = 0;
                         curr->me_but_in_store->empty = 1;
-                        ret->was_here =curr->me_but_in_store->been_modified;
+                        ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s\n", (char*)ret->key);
                         curr->me_but_in_store->key = NULL;
                         ret->data = curr->me_but_in_store->data;
                         curr->me_but_in_store->data = NULL;
@@ -692,7 +696,13 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         LOCK(&FILES_STORAGE->stat_lck);
                         FILES_STORAGE->nentries--;
                         FILES_STORAGE->total_victims++;
-                        if(ret->data) FILES_STORAGE->total_bytes -= curr->me_but_in_store->ptr_tail*sizeof(uint8_t);
+                        if(ret->data){
+                            long long test = FILES_STORAGE->total_bytes;
+                            FILES_STORAGE->total_bytes -= (curr->me_but_in_store->ptr_tail+1)*sizeof(u_int8_t);
+                            #ifdef DEBUG
+                            assert(test > FILES_STORAGE->total_bytes);
+                            #endif // DEBUG
+                        }
                         UNLOCK(&FILES_STORAGE->stat_lck);
                         curr->me_but_in_store->ref = 0;
                         curr->me_but_in_store->am_being_used = 0;
@@ -748,6 +758,100 @@ find_victim(cach_hash_t *ht, pointers *ret, cach_entry_t *repl){
     }
     return 0;
 }
+
+int
+_helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, ssize_t *num_bytes){
+    while(curr != NULL){
+        if(!curr->am_dead && curr->me_but_in_store->am_being_used<=0 && curr->me_but_in_store->ptr_tail>0){
+            #ifdef DEBUG
+            assert(curr->me_but_in_store->am_being_used >= 0);
+            #endif // DEBUG
+            if(TRYLOCK(&curr->mutex) == 0){
+                //!LOCK ACQUIRED
+                if(!curr->am_dead){
+                    pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
+                    if(!TRYLOCK(THIS_IS_LCK)){
+                        //!LOCK ACQUIRED
+                        curr->am_dead = 1;
+                        curr->me_but_in_store->empty = 1;
+                        ret->been_modified = curr->me_but_in_store->been_modified;
+                        ret->key = curr->me_but_in_store->key;
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s\n", (char*)ret->key);
+                        curr->me_but_in_store->key = NULL;
+                        ret->data = curr->me_but_in_store->data;
+                        curr->me_but_in_store->data = NULL;
+                        ret->size_data = curr->me_but_in_store->ptr_tail+1;
+                        LOCK(&FILES_STORAGE->stat_lck);
+                        MY_CACHE->nfiles--;
+                        MY_CACHE->buckets[index]->num_dead++;
+                        MY_CACHE->buckets[index]->nfiles_row--;
+                        FILES_STORAGE->nentries--;
+                        FILES_STORAGE->total_victims++;
+                        if(ret->data){
+                            long long test = FILES_STORAGE->total_bytes;
+                            *num_bytes =  (curr->me_but_in_store->ptr_tail+1)*sizeof(u_int8_t);
+                            FILES_STORAGE->total_bytes -= (*num_bytes);
+                            #ifdef DEBUG
+                            assert(test > FILES_STORAGE->total_bytes);
+                            #endif // DEBUG
+                        }
+                        UNLOCK(&FILES_STORAGE->stat_lck);
+                        curr->me_but_in_store->ref = 0;
+                        curr->me_but_in_store->ptr_tail=0;
+                        curr->me_but_in_store->am_being_used = 0;
+                        curr->me_but_in_store->me_but_in_cache = NULL;
+                        curr->me_but_in_store->OWNER = 0;
+                        curr->me_but_in_store->O_LOCK = 0;
+                        curr->me_but_in_store->ptr_tail = 0;
+                        curr->me_but_in_store->open = 0;
+                        curr->me_but_in_store->time = 0;
+                        curr->me_but_in_store->been_modified = 0;
+                        curr->file_name = NULL;
+                        curr->me_but_in_store = NULL;
+                        curr->ref = 0;
+                        curr->time = 0;
+                        //!LOCK RELEASED 
+                        UNLOCK(THIS_IS_LCK);
+                        UNLOCK(&curr->mutex);
+                        return 0;
+                    }
+                }
+                //!LOCK RELEASED if victim is dead
+                UNLOCK(&curr->mutex);
+            }
+        }
+        if(tail_or_head){
+            curr = curr->prev;
+        } else curr = curr->next;
+    }
+    return -1;
+}
+
+/**
+ * @param ht -- cache that will be used to look for a victim
+ * @param ret -- key and data will be saved here.
+ * @param time_to_quit: signal handler variable.
+ * @return -- Numbers of bytes deleted.
+ */
+ssize_t
+find_victim_no_rep(cach_hash_t *ht, pointers *ret, volatile sig_atomic_t *time_to_quit){
+    volatile int check = -1;
+    int index = 0;
+    ssize_t num_bytes = 0;
+    index =ht->NUM_GROUP-1;
+    //0 for head, 1 tail
+    while(check && *time_to_quit != 1){
+        int tail_or_head = 0;
+        cach_entry_t *curr = NULL;
+        tail_or_head = get_rand_diff() < 0 ? 0 : 1;
+        curr = tail_or_head == 0 ? ht->buckets[index]->head : ht->buckets[index]->tail;
+        check =_helper_find_vic_no_rep(curr, tail_or_head, ret, ht, index, &num_bytes);
+        index--;
+        if(index < 0) index = MY_CACHE->NUM_GROUP - 1;
+    }
+    return num_bytes;
+}
+
 
 void print_info (cach_hash_t *ht){
     printf("nfiles: %ld size buck: %zd\n", ht->nfiles, ht->incr_entr);

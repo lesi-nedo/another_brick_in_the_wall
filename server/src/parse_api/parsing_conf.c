@@ -131,6 +131,9 @@ static short int is_valid_max_size(char *arg, void *value){
         case 'g':
             moltp=1e+9;
         break;
+        case 'k':
+            moltp=1000;
+        break;
         default:
             return 1;
     }

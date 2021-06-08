@@ -9,6 +9,7 @@ typedef struct pass_pointers pointers;
 #include <stdio.h>
 #include <pthread.h>
 #include "files_s.h"
+#include <signal.h>
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
@@ -18,7 +19,7 @@ struct pass_pointers {
     void *key;
     void *data;
     size_t size_data;
-    int was_here;
+    int been_modified;
 };
 
 struct cach_entry_s {
@@ -91,6 +92,8 @@ int
 int
 cach_hash_destroy(cach_hash_t *),
     cach_hash_dump(FILE *, cach_hash_t *);
+ssize_t
+find_victim_no_rep(cach_hash_t *, pointers *, volatile sig_atomic_t *time_to_quit);
 
 #if defined(c_plusplus) || defined(__cplusplus)
 }

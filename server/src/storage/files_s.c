@@ -77,6 +77,7 @@ icl_hash_create( int nbuckets, unsigned int (*hash_function)(void*), int (*hash_
 
     ht->nentries = 0;
     ht->max_bytes = 0;
+    ht->MAX_SPACE_AVAILABLE = 0;
     ht->total_bytes =0;
     ht->max_files = 0;
     ht->total_victims = 0;
@@ -222,7 +223,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
         empty->key = key;
         empty->data = data;
         empty->been_modified =0;
-        empty->ptr_tail = size_data-1;
+        empty->ptr_tail = size_data > 0? size_data-1: 0;
         empty->OWNER = 0;
         empty->O_LOCK = 1;
         empty->me_but_in_cache = NULL;
@@ -255,7 +256,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
     curr->open = 1;
     curr->O_LOCK= 1;
     curr->me_but_in_cache = NULL;
-    curr->ptr_tail = size_data-1;
+    curr->ptr_tail = size_data > 0? size_data-1: 0;
     curr->prev = NULL;
     curr->next = NULL;
     LOCK(&ht->stat_lck);
@@ -322,7 +323,13 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
             curr->me_but_in_cache = NULL;
             LOCK(&ht->stat_lck);
             ht->nentries--;
-            if(ret->data) ht->total_bytes -= curr->ptr_tail*sizeof(uint8_t);
+            if(ret->data){ 
+                long long test = ht->total_bytes;
+                ht->total_bytes -= (curr->ptr_tail+1)*sizeof(uint8_t);
+                #ifdef DEBUG
+                assert(test > ht->total_bytes);
+                #endif // DEBUG
+            }
             UNLOCK(&ht->stat_lck);
             curr->OWNER =0;
             curr->O_LOCK = 0;
@@ -382,7 +389,6 @@ icl_hash_destroy(icl_hash_t *ht, void (*free_key)(void*), void (*free_data)(void
             if (*free_data && curr->data) (*free_data)(curr->data);
             if((errno = pthread_mutex_destroy(&curr->wr_dl_ap_lck))){
                 fprintf(stderr, "trying to destroy the lock. ERROR: %s\n", strerror(errno));
-                //dprintf(ARG_LOG_TH.pipe[WRITE], "ERROR: trying to destroy lock in icl_hash_destroy.\n");
             }
             free(curr);
 
@@ -420,7 +426,7 @@ icl_hash_dump(FILE* stream, icl_hash_t* ht)
         for(curr=bucket; curr!=NULL; curr=curr->next) {
             if(!curr->empty && curr->key){
                 if(curr->empty && (curr->me_but_in_cache == NULL || curr->me_but_in_cache->am_dead)) curr->me_but_in_cache = NULL;
-                fprintf(stream, "STORAGE: %s ", (char *)curr->key);
+                fprintf(stream, "STORAGE: %s Data ptr: %zu ", (char *)curr->key, curr->ptr_tail);
                 if(curr->me_but_in_cache) fprintf(stream, "CACHE: %s\n", curr->me_but_in_cache->file_name);
                 else fprintf(stream, "CACHE: (null)\n");
             }
@@ -475,6 +481,7 @@ void print_storage(icl_hash_t *ht){
 }
 
 
+#ifdef DEBUG_NEW
 void print_rev(icl_hash_t *ht){
     printf("----------------------\n");
     for(size_t i=0; i<ht->nbuckets; i++){
@@ -493,7 +500,6 @@ void print_rev(icl_hash_t *ht){
         printf("\n");
     }
 }
-
 void print_delte_rand(icl_hash_t *ht){
     srand(time(NULL));
     icl_entry_t *curr = NULL;
@@ -514,10 +520,6 @@ void print_delte_rand(icl_hash_t *ht){
     }
 }
 
-
-
-
-#ifdef DEBUG_NEW
 int main(int argc, char **argv){
     FILES_STORAGE = icl_hash_create(40, hash_pjw, NULL);
     struct Cache_settings sett;

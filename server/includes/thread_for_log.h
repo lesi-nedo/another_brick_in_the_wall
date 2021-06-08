@@ -8,7 +8,7 @@
 #define MAX_ITER_THEN_STOP 20
 
 typedef struct {
-    //if set to 1 then a signal to creator of the thread has arrived ⦟
+    //if set to 1 then a signal to creator of the thread has arrived
     //it needs to exit.
     volatile int sign;
     char *file_name;

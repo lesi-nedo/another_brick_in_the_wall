@@ -5,6 +5,7 @@ DEBUG=-g
 STD=-std=c11 -D_POSIX_C_SOURCE=20112L
 GNU=-D_GNU_SOURCE
 LIB=-lpthread
+DEB=-DDEBUG
 
 DIR_LINK=./parse_api/
 DIR_STOR=./storage/
@@ -33,7 +34,7 @@ all: ${TARGET}
 
 ${TARGET}: ${TARGET}.c  $(DIR_LINK)${LOG_TARGET}.c $(DIR_LINK)$(PARSE_TARGET).c\
 ${DIR_STOR}${TARG_STOR}.c ${DIR_STOR}${TARG_CACH}.c $(DIR_THR)$(TARG_THR).c $(DIR_SOCK)$(TARG_SOCK)
-	@${CC} ${FLAGS} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
+	@${CC} ${FLAGS} ${DEB} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
 	@${RM} *.txt
 
 check:

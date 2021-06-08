@@ -14,7 +14,7 @@
 #include <errno.h>
 
 #if !defined(BUFSIZE)
-#define BUFSIZE 256
+#define BUFSIZE 1256
 #endif
 #define READ 0
 #define WRITE 1

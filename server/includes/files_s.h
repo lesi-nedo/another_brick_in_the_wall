@@ -66,7 +66,7 @@ int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
-int icl_hash_delete_ext( icl_hash_t *, void*, void (*free_key)(void*), void (*free_data)(void*), pointers *, size_t );
+int icl_hash_delete_ext( icl_hash_t *, void*, pointers *, size_t );
 
 
 /* compare function */

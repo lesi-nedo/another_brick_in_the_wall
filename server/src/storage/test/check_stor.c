@@ -127,8 +127,8 @@ void* isrt_rand(void *args_th){
             char *rand_str_del = rand_t[get_rand() % (i+1)];
             // sleep(rand_sleep);
             errno = 0;
-            res = icl_hash_delete_ext(args->stor, rand_str_del, NULL, NULL, &ret,0);
-            if(res == 0) fprintf(args->all_deletes, "%s\n", rand_str_del);
+            res = icl_hash_delete_ext(args->stor, rand_str_del, &ret,0);
+            if(res == 1) fprintf(args->all_deletes, "%s\n", rand_str_del);
             else fprintf(args->not_del, "%s\n", rand_str_del);
             // rand_sleep = get_rand() % MOD_SLEEP;
         }
@@ -250,8 +250,8 @@ START_TEST(test_parse){
         if(ret_point.key) fprintf(vict, "%s\n", (char *)ret_point.key);
         if(i > (int) (TEST % (i+1))/2 && i % 2 == 1){
             char *rand_rem = rand_t[lrand48() % (i+1)];
-            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, NULL, NULL, &ret_del, 0);
-            if(res == 0) fprintf(all_deletes, "%s\n", rand_rem);
+            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, &ret_del, 0);
+            if(res == 1) fprintf(all_deletes, "%s\n", rand_rem);
             else fprintf(not_del, "%s\n", rand_rem);
             if(res == -1 && errno == ETXTBSY) fprintf(fl_sto, "FILE BUSY: %s -------\n", rand_rem);
         }

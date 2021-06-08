@@ -58,7 +58,7 @@ void *log_to_file(void *arg_th){
             fprintf(stderr, "\033[1;31mread has failed\033[0;37m:%s\n", strerror(errno));
             break;
         }
-        fprintf(fl_log, "%s", buff_pipe);
+        fwrite(buff_pipe, sizeof(char), res, fl_log);
         fflush(fl_log);
     }
     close(args->pipe[READ]);

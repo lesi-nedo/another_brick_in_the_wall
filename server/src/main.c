@@ -165,16 +165,19 @@ int main (int argc, char **argv){
         goto THATS_ALL_FOLKS;
     }
     while(sig_teller != 1 && ( sig_teller==0 || (sig_teller== 2 && total_con > 0))){
-        printf("\033[1;31mWAITING    \033[0;37m\033[s\n");
-        printf("\033[1A");
+        //THESE PRINTS MAKES MY CODE REALLY SLOW AND DELAY SIGNAL
+        // I DON'T KNOW WHY
+        // printf("\033[1;31mWAITING    \033[0;37m\033[s\n");
+        // printf("\033[1A");
         int nready = epoll_wait(ep_fd, events, MAX_FDS, -1);
         for(int i =0; i < nready; i++){
-            printf("\033[1;%dmI'M RUNNING\033[0;37m\033[s\n", color);
-            printf("\033[1A");
+            // printf("\033[1;%dmI'M RUNNING\033[0;37m\033[s\n", color);
+            // printf("\033[1A");
             color = color ==35? 36 : 35;
             int new_sc = 0;
             if((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) ||
             !(events[i].events & EPOLLIN)){
+                dprintf(ARG_LOG_TH.pipe[WRITE], "CLOSED: %d\n", events[i].data.fd);
                 // print_error("Hi sweetie, I just want to let you know that epoll_wait failed on a file descriptor. <3 \n", NULL);
                 total_con--;
                 if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) <0){
@@ -198,7 +201,7 @@ int main (int argc, char **argv){
                     continue;
                 }
                 non_blocking(new_sc);
-                dprintf(ARG_LOG_TH.pipe[WRITE], "New Connection: %d\n", new_sc);
+                dprintf(ARG_LOG_TH.pipe[WRITE], "New: %d\n", new_sc);
                 struct epoll_event event = {0};
                 event.data.fd = new_sc;
                 event.events = EPOLLIN;
@@ -215,9 +218,8 @@ int main (int argc, char **argv){
                     struct epoll_event event = {0};
                     event.data.fd = to_add_fd;
                     event.events = EPOLLIN;
-                    total_con++;
                     if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, to_add_fd, &event) < 0){
-                        print_error("Hey dandy, don't be mad but I ran into a problem.\n", NULL);
+                        print_error("Hey dandy, don't be mad but I ran into a problem.\nerrno: %s\n", strerror(errno));
                         res = errno;
                         goto THATS_ALL_FOLKS;
                     }
@@ -230,11 +232,10 @@ int main (int argc, char **argv){
             } else{
                 res =writen(my_bi.pipe_ready_fd[WRITE], &events[i].data.fd, sizeof(events[i].data.fd), &sig_teller);
                 if(res < 0){
-                    print_error("Our path ends here, have a nice life.\n",NULL);
+                    print_error("Our path ends here, have a nice life.\nerrno: %s\n",strerror(errno));
                     res = errno;
                     goto THATS_ALL_FOLKS;
                 }
-                total_con--;
                 if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) < 0){
                     res = errno;
                     goto THATS_ALL_FOLKS;

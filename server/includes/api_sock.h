@@ -67,4 +67,8 @@ char* cwd();
 char *get_full_path(char *, size_t );
 int writeFile(const char *pathname, const char *dirname);
 int appendToFile(const char* pathname, void *data, size_t size, const char* dirname);
+int lockFile(const char *pathname);
+int unlockFile(const char *pathname);
+int closeFile(const char *pathname);
+int removeFile(const char *pathname);
 #endif // !API_SOCK_H

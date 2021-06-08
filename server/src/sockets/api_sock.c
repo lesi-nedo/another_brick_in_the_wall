@@ -146,7 +146,7 @@ int read_from(int ep_fd ,int sock_fd, void *buff, int size){
  */
 int write_to(int ep_fd, int sock_fd, void *buff, int len){
     int n =0;
-
+    errno =0;
     n =writen(sock_fd, buff, len, NULL);
     if(n < 0){
         print_error("Buddy, I was trying to read from socket and I failed. Do not be mad <3\nerrno: %s\n", strerror(errno));
@@ -162,7 +162,6 @@ int write_to(int ep_fd, int sock_fd, void *buff, int len){
     return 1;
 
 }
-
 
 
 int _ready_for(){
@@ -292,6 +291,7 @@ int openFile(const char *pathname, int flags){
     to_wrt_ID[0] = 0;
     to_wrt_ID[1] = LOCK_ID;
     int res =0;
+    modify_event(epoll_fd,sock_fd, EPOLLOUT);
     assert(_ready_for() & EPOLLOUT);
     switch (flags) {
         case O_CREATE_M:
@@ -313,8 +313,7 @@ int openFile(const char *pathname, int flags){
     if(res == -1){
         return -1;
     }
-    res=_helper_send(pathname, &LOCK_ID);
-    return res;
+    return _helper_send(pathname, &LOCK_ID);
 }
 /**
  * This function was taken from esercitazione n.10
@@ -368,6 +367,12 @@ int readFile(const char*pathname, void **buff, size_t *size){
     assert(_ready_for() & EPOLLIN);
     res = helper_receive(buff, size);
     if(res == 1){
+        res = read_from(epoll_fd, sock_fd, to_wrt_ID, sizeof(to_wrt_ID));
+        if(res == -1) return -1;
+        if(to_wrt_ID[0] != IS_NOT_ERROR){
+            errno = to_wrt_ID[1];
+            return -1;
+        }
         return 0;
     } else if(res == 0){
         errno = EOWNERDEAD;
@@ -388,7 +393,7 @@ int readNFiles(int N, const char *dirname){
     size_t to_wrt_N = 0;
     if(N <= 0){
         to_wrt_N = 0;
-    }
+    } else to_wrt_N = N;
     size_t to_wrt_ID[2];
     int res = 0;
     to_wrt_ID[0] = READ_NF;
@@ -588,11 +593,6 @@ int writeFile(const char *pathname, const char *dirname){
         free(data);
         return -1;
     }
-    res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
-    if(res == -1){
-        free(data);
-        return -1;
-    }
     res = openFile(pathname, O_CREATE_M | O_LOCK_M);
     if(res == -1){
         free(data);
@@ -634,3 +634,42 @@ char *get_full_path(char *file, size_t size){
     strncat(curr_dir, file, size);
     return curr_dir;
 }
+
+int _helper_l_u_c_r(const char *pathname, int op){
+    if(pathname == NULL){
+        print_error("Pass some better arguments to lockFile, bro.\n", NULL);
+        errno =EINVAL;
+        return -1;
+    }
+    int res = 0;
+    size_t to_wrt_ID[2];
+    to_wrt_ID[0] = op;
+    to_wrt_ID[1] = LOCK_ID;
+    res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
+    if(res == -1){
+        return -1;
+    }
+    assert(_ready_for() & EPOLLOUT);
+    res = write_to(epoll_fd, sock_fd, &to_wrt_ID, sizeof(to_wrt_ID));
+    if(res == -1){
+        return -1;
+    }
+    return _helper_send(pathname, &LOCK_ID);
+}
+
+int lockFile(const char *pathname){
+    return _helper_l_u_c_r(pathname, LOCK_F);
+}
+
+int unlockFile(const char *pathname){
+    return _helper_l_u_c_r(pathname, UNLOCK_F);
+}
+
+int closeFile(const char *pathname){
+    return _helper_l_u_c_r(pathname, CLOSE_F);
+}
+
+int removeFile(const char *pathname){
+    return _helper_l_u_c_r(pathname, REMOVE_F);
+}
+

@@ -288,28 +288,27 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, size_t size_data, pointer
  *
  * @returns 0 on success, -1 on failure.
  *///TODO: CHANGE THE WAY YOUDELETE AN ELEMENT FROM TABLE
-int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void (*free_data)(void*), pointers *ret, size_t ID_CLIENT)
+int icl_hash_delete_ext(icl_hash_t *ht, void* key, pointers *ret, size_t ID_CLIENT)
 {
     icl_entry_t *curr;
     unsigned int hash_val;
     if(!ht || !key) {
         errno = EINVAL;
-        return -1;
+        return 0;
     }
     hash_val = (* ht->hash_function)(key) % ht->nbuckets;
     for (curr=ht->buckets[hash_val]; curr != NULL;  curr = curr->next)  {
         if (!curr->empty && ht->hash_key_compare(curr->key, key)) {
-            if(curr->am_being_used || curr->open){
-                errno = ETXTBSY;
-                return -1;
-            }
             //!LOCK ACQUIRED
             LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-            if(curr->O_LOCK && curr->OWNER != ID_CLIENT){
+            while(curr->am_being_used > 0){
+                sched_yield();
+            }
+            if(!curr->O_LOCK || (curr->O_LOCK && curr->OWNER != ID_CLIENT)){
                 //!LOCK RELEASED
                 UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
                 errno=EPERM;
-                return -1;
+                return 0;
             }
             curr->empty = 1;
             curr->open = 0;
@@ -353,15 +352,16 @@ int icl_hash_delete_ext(icl_hash_t *ht, void* key, void (*free_key)(void*), void
                         MY_CACHE->nfiles--;
                         //!LOCK RELEASED
                         UNLOCK_IFN_RETURN(&in_cach->mutex, -1);
-                        return 0;
+                        return 1;
                     }
                 }
                 UNLOCK_IFN_RETURN(&in_cach->mutex, -1);
             }
-            return 0;
+            return 1;
         }
     }
-    return -1;
+    errno=ENODATA;
+    return 0;
 }
 
 /**
@@ -426,7 +426,8 @@ icl_hash_dump(FILE* stream, icl_hash_t* ht)
         for(curr=bucket; curr!=NULL; curr=curr->next) {
             if(!curr->empty && curr->key){
                 if(curr->empty && (curr->me_but_in_cache == NULL || curr->me_but_in_cache->am_dead)) curr->me_but_in_cache = NULL;
-                fprintf(stream, "STORAGE: %s Data ptr: %zu ", (char *)curr->key, curr->ptr_tail);
+                fprintf(stream, "STORAGE: %s Data PTR: %zu USED: %ld OWNER: %lu LOCKED: %d ", (char *)curr->key, curr->ptr_tail,\
+                 curr->am_being_used, curr->OWNER, curr->O_LOCK);
                 if(curr->me_but_in_cache) fprintf(stream, "CACHE: %s\n", curr->me_but_in_cache->file_name);
                 else fprintf(stream, "CACHE: (null)\n");
             }

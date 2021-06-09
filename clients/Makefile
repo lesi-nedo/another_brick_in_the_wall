@@ -20,3 +20,6 @@ all: ${TARGET}
 
 ${TARGET}: ${TARGET}.c ${DIR_SOCK}${TARG_SOCK}.c
 	@${CC} ${FLAGS} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
+
+clean:
+	${RM} ${TARGET}

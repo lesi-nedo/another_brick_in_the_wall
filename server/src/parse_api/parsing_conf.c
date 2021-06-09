@@ -201,7 +201,7 @@ static short int is_valid_float(char *arg, void *value){
 /** 
  * @author:Dan Bernstein
  * @website: http://www.cse.yorku.ca/~oz/hash.html
- * @param: take a string to hash it
+ * @param str: string to be hashed.
 */
 unsigned long 
 hash(const unsigned char *str)

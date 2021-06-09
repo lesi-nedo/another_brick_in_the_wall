@@ -19,8 +19,13 @@
 Arg_log_th ARG_LOG_TH;
 cach_hash_t *MY_CACHE;
 icl_hash_t *FILES_STORAGE;
+long FILE_SIZE;
 static volatile sig_atomic_t sig_teller = 0;
 
+/**
+ * @brief signal handler
+ * @param sig: signal that we want to manage.
+ */
 static void sighan(int sig){
     switch(sig){
         case SIGINT:
@@ -35,6 +40,12 @@ static void sighan(int sig){
     }
 }
 
+/**
+ * @brief: this function is for passing arguments to cach_hash_create
+ * @param setting: this array has all settings parsed from .conf file
+ * @param sett: where will be save relative settings to cache.
+ * @return Nada.
+ */
 void cache_init_sett(Server_conf settings[], struct Cache_settings *sett){
     for(size_t i=0; i<num_avail_settings; i++){
         unsigned long hashed_val = hash(available_settings[i])%BASE_MOD%num_avail_settings;
@@ -63,6 +74,16 @@ void cache_init_sett(Server_conf settings[], struct Cache_settings *sett){
     }//NU_GROUP has to b less then start_ini_cache
 }
 
+/**
+ * @brief: creates log thread, worker threads. Main thread communicates
+ * between workers with two pipes one for ready fd and from one main reads fd that has been served.
+ * But one thread keeps serving a client till it receives EAGAIN or EWOULDBLOCK from read or write
+ * then it inserts into pipe.
+ * Each workers dumps into pipe all logs than a thread that only reads from pipe and writes to the file does his job.
+ * I decide to experiment a little bit so each new fd is non blocking, my intent was to make sort of asynchronous response but,
+ * it turn out to be quite hard but I kept the non blocking fd
+ */
+
 int main (int argc, char **argv){
     int res =0;
     int color = 35;
@@ -70,7 +91,6 @@ int main (int argc, char **argv){
     int listener_fd = 0;;
     int ep_fd = 0;
     Threads_w my_bi;
-    my_bi.pimp = pthread_self();
     struct epoll_event *events = NULL;
     struct epoll_event accept_event={0};
     struct epoll_event pipe_event={0};
@@ -93,13 +113,14 @@ int main (int argc, char **argv){
     SYSCALL_EXIT(sigaction, res, sigaction(SIGQUIT, &sa, NULL), "Sorry,bye.\n", NULL);
     SYSCALL_EXIT(sigaction, res, sigaction(SIGHUP, &sa, NULL), "Sorry,bye.\n", NULL);
      //parsing conf file
-    char path_conf[] = {"../config.txt"};
+    char path_conf[] = {"config.txt"};
     struct Cache_settings cach_set;
     Server_conf  all_settings[num_avail_settings];
     init_serv_conf(all_settings);
     init_settings_arr(all_settings);
     parse_file(path_conf, all_settings);
     cache_init_sett(all_settings, &cach_set);
+    //creating cache and file store
     MY_CACHE = cach_hash_create(cach_set, get_next_index);
     int buckets_fl = (int) cach_set.START_INI_CACHE+cach_set.START_INI_CACHE*cach_set.EXTRA_CACHE_SPACE;
     FILES_STORAGE = icl_hash_create(buckets_fl, hash_pjw, string_compare);
@@ -108,7 +129,6 @@ int main (int argc, char **argv){
     }
     FILES_STORAGE->MAX_SPACE_AVAILABLE= cach_set.SPACE_AVAILABLE;
     my_bi.num_thr = all_settings[hash(available_settings[2])%BASE_MOD%num_avail_settings].value;
-    my_bi.pimp = pthread_self();
     my_bi.time_to_quit = &sig_teller;
     my_bi.STORE = FILES_STORAGE;
     my_bi.CACHE = MY_CACHE;
@@ -134,9 +154,6 @@ int main (int argc, char **argv){
         goto THATS_ALL_FOLKS;
     }
    
-    // icl_hash_t FILES_STORAGE;
-    //START_INI_CACHE is NUM_FILES
-    // cach_hash_t MY_CACHE;
     ARG_LOG_TH.sign = 0;
     ARG_LOG_TH.file_name = all_settings[hash((unsigned char *)"LOG_FILE_NAME")%BASE_MOD%num_avail_settings].value_string;
     if(pipe(ARG_LOG_TH.pipe) == -1 || pipe2(my_bi.pipe_ready_fd, O_NONBLOCK) == -1 || pipe2(my_bi.pipe_done_fd, O_NONBLOCK)){
@@ -188,13 +205,16 @@ int main (int argc, char **argv){
                 continue;
             }
             if(events[i].data.fd == listener_fd){
-                if(sig_teller != 0) continue;
                 if((new_sc =accept(listener_fd, (struct sockaddr*)NULL, NULL)) < 0){
                     if(errno != EAGAIN || errno != EWOULDBLOCK){
                         print_error("With a broken heart I have to tell I have failed you, goodbye\n", NULL);
                         res = errno;
                         goto THATS_ALL_FOLKS;
                     }
+                }
+                if(sig_teller != 0){
+                    close(new_sc);
+                    continue;
                 }
                 if(new_sc > MAX_FDS){
                     print_error("I can't no more honey. Did not add the new one.\n", NULL);
@@ -255,6 +275,11 @@ THATS_ALL_FOLKS:
     ARG_LOG_TH.sign = 1;
     close(ARG_LOG_TH.pipe[WRITE]);
     kill_those_bi(&my_bi);
+    char path_logs[] ={"../logs"};
+    res = chdir(path_logs);
+    if(res < 0){
+        print_error("Dump files at current location.\n", NULL);
+    }
     FILE *fl_stor = fopen("store_dump.txt", "a");
     FILE *fl_cach = fopen("cache_dump.txt", "a");
     if(fl_stor != NULL && fl_cach != NULL){
@@ -275,6 +300,8 @@ THATS_ALL_FOLKS:
     icl_hash_destroy(FILES_STORAGE, free, free);
     free(events);
     pthread_join(th_logger, NULL);
+    chdir("../server");
+    printf("%s\n", cwd());
     unlink(SOCK_NAME);
     for(size_t i = 0; i< num_avail_settings; i++){
             if(all_settings[i].str_or_int == 0){

@@ -38,6 +38,7 @@ extern int sock_fd;
 extern int epoll_fd;
 extern struct epoll_event events[MAX_EVENTS];
 extern size_t LOCK_ID;
+extern long SIZE_FILE;
 
 typedef struct {
     int state;
@@ -51,7 +52,6 @@ typedef struct {
 
 int ini_sock(char *);
 int non_blocking(int lis_fd);
-int ini_sock_client(const char *);
 int delete_event(int , int, int);
 int add_event(int, int, int);
 int read_from(int,int, void *, int);

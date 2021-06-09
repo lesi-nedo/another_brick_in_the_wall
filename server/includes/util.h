@@ -106,6 +106,25 @@ static inline void print_error(const char * str, ...) {
     free(p);
 }
 
+static inline void print_success(const char * str, ...) {
+    const char err[]="\033[1;32mSUCCESS: \033[1;37m";
+    va_list argp;
+    char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
+    if (!p) {
+	perror("malloc");
+        fprintf(stderr,"FATAL ERROR nella funzione 'print_error'\n");
+        return;
+    }
+    strcpy(p,err);
+    strcpy(p+strlen(err), str);
+    va_start(argp, str);
+    vfprintf(stderr, p, argp);
+    va_end(argp);
+    fprintf(stderr, "\033[0;37m");
+    free(p);
+}
+
+
 
 /** 
  * \brief Controlla se la stringa passata come primo argomento e' un numero.

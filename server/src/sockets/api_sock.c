@@ -20,6 +20,8 @@ int sock_fd = -1;
 int epoll_fd = 0;
 struct epoll_event events[MAX_EVENTS];
 size_t LOCK_ID = 0;
+long SIZE_FILE =0;
+
 
 /**
  * @param SOCK_NAME: name of the socket to be open
@@ -38,25 +40,6 @@ int ini_sock(char *SOCK_NAME){
     strncpy(my_server.sun_path, SOCK_NAME, strlen(SOCK_NAME)+1);
     SYSCALL_RETURN(bind, res,  bind(lis_fd, (struct sockaddr*)&my_server, sizeof(my_server)), -1, "I need some time off, no hard feelings.\n", NULL);
     SYSCALL_RETURN(listen, res,  listen(lis_fd, MAX_LOG), -1, "Nel mezzo del cammin di tua vita hai incotrato un errore.\n", NULL);
-    return lis_fd;
-}
-/**
- * @param SOCK_NAME: name of the socket to be open
- * @return: returns the file descriptor of the opened socket, -1 if error occurred
- * @desc: initial socket client side
- */
-int ini_sock_client(const char *SOCK_NAME){
-    int lis_fd = 0;
-    int res = 0;
-
-    SYSCALL_RETURN(socket, lis_fd, socket(AF_UNIX, SOCK_STREAM, 0), -1, "Bye, I'll miss you part 2. <3.\n", NULL);
-    struct sockaddr_un my_server;
-
-    memset(&my_server, 0, sizeof(my_server));
-    my_server.sun_family = AF_UNIX;
-    strncpy(my_server.sun_path, SOCK_NAME, strlen(SOCK_NAME)+1);
-    errno =0;
-    SYSCALL_RETURN(connect, res,  connect(lis_fd, (struct sockaddr*)&my_server, sizeof(my_server)), -1, "I'll try to connect again, Boss...\n", NULL);
     return lis_fd;
 }
 /**
@@ -125,12 +108,10 @@ int read_from(int ep_fd ,int sock_fd, void *buff, int size){
     int n = 0;
     n= readn(sock_fd, buff, size, NULL);
     if(n < -1){
-        print_error("Hun, an error occured \nerrno: %s\n", strerror(errno));
         delete_event(ep_fd, sock_fd, EPOLLIN);
         return -1;
     }
     if(n==0){
-        print_error("Hun, server was closed, are you sad now?\nerrno: %s\n", strerror(errno));
         delete_event(ep_fd, sock_fd, EPOLLIN);
         return -1;
     }
@@ -149,13 +130,11 @@ int write_to(int ep_fd, int sock_fd, void *buff, int len){
     errno =0;
     n =writen(sock_fd, buff, len, NULL);
     if(n < 0){
-        print_error("Buddy, I was trying to read from socket and I failed. Do not be mad <3\nerrno: %s\n", strerror(errno));
         delete_event(ep_fd, sock_fd, EPOLLOUT);
         close(sock_fd);
         return -1;
     }
     if(n == 0){
-        print_error("Hun, server was closed, are you sad now (I failed in write_to)?\nerrno: %s\n", strerror(errno));
         delete_event(ep_fd, sock_fd, EPOLLOUT);
         return 0;
     }
@@ -163,12 +142,13 @@ int write_to(int ep_fd, int sock_fd, void *buff, int len){
 
 }
 
-
+/**
+ * @brief:Waits for data from server
+ */
 int _ready_for(){
     int nready = 0;
     nready = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
     if(nready<0){
-        print_error("Hey boy I hit a breaking point.\nerrno: %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
     for(size_t i=0; i<nready; i++){
@@ -179,9 +159,16 @@ int _ready_for(){
     return -1;
 }
 
+/**
+ * @brief: function that helps the main API to send pathname and pathname size's to the server.
+ * @param pathname: pathname to be sent to the server
+ * @param size: size of pathname
+ * @return 0 success, -1 fatal error.
+ */
+
 int _helper_send(const char *pathname, size_t *ret){
     size_t to_wrt = 0;
-    //resp[0] if 1 then it went something wrong and in resp[1] will be save errno value 
+    //resp[0] if 1 then it went something wrong and in resp[1] will be save errno value
     size_t resp[2];
     resp[0]=0;
     resp[1]=0;
@@ -196,13 +183,19 @@ int _helper_send(const char *pathname, size_t *ret){
     res= read_from(epoll_fd, sock_fd, resp, sizeof(resp));
     if(res == -1) return -1;
     if(resp[0] != IS_NOT_ERROR){
-        print_error("Pass some better arguments, Boss.\nError: %s\n", strerror(resp[1]));
+        errno=resp[1];
         return -1;
     }
     *ret = resp[1];
     return 0;
 }
 
+/**
+ * @brief: helps API to send data to the server
+ * @param data: the data to be send to the server
+ * @param len: the length of the data
+ * @return: 1 success, 0 server was closed, -1 fatal error has occured
+ */
 int _helper_send_data(void *data, size_t len){
     int res =0;
     size_t resp[2] = {0};
@@ -221,6 +214,12 @@ int _helper_send_data(void *data, size_t len){
     return res;
 }
 
+/**
+ * @brief: gets the response from the server IMPORTANT if is used openFile with O_CREATE_M or O_OCREATE_M | O_LOCK_O than this function should be called after.
+ * @param buff: buffer to store data.
+ * @param size: size of data read from server.
+ * @return 1 success, 0 closed server -1 error
+ */
 int helper_receive(void **buff, size_t *size){
     int res = 0;
     size_t resp[2];
@@ -247,22 +246,42 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
         errno = EINVAL;
         return -1;
     }
+    int lis_fd = 0;
+    SYSCALL_RETURN(socket, lis_fd, socket(AF_UNIX, SOCK_STREAM, 0), -1, "Bye, I'll miss you part 2. <3.\n", NULL);
+    struct sockaddr_un my_server;
+
+    memset(&my_server, 0, sizeof(my_server));
+    my_server.sun_family = AF_UNIX;
+    strncpy(my_server.sun_path, SOCK_NAME, strlen(SOCK_NAME)+1);
+    errno =0;
+    int res =0;
+    char path[] = {"../server/"};
+    char *curr_dir =cwd();
+    if(curr_dir == NULL) return -1;
+    res = chdir(path);
+    if(res < 0){
+        free(curr_dir);
+        return -1;
+    }
     unsigned long  wait = (abstime.tv_sec*1e+9)+abstime.tv_nsec;
-    unsigned long total = 0;
-    int res = ini_sock_client(sockname);
+    unsigned long total = msec == 0? wait: 0;
+    res = connect(lis_fd, (struct sockaddr*)&my_server, sizeof(my_server));;
     while(res == -1 && total < wait){
         msleep(msec);
-        total += msec*1e+6;
-        res = ini_sock_client(sockname);
+        total +=  msec*1e+6;
+        res = connect(lis_fd, (struct sockaddr*)&my_server, sizeof(my_server));;
     }
     if(res==-1){
         errno = ECONNREFUSED;
+        free(curr_dir);
         return -1;
     } else {
-        sock_fd = res;
+        sock_fd = lis_fd;
     }
+    res = chdir(curr_dir);
+    if(res < 0) return -1;
+    free(curr_dir);
     if((epoll_fd = epoll_create1(0))< 0){
-        print_error("I give up.\nerrno: %s\n", strerror(errno));
         return -1;
     }
     return add_event(epoll_fd, sock_fd, EPOLLOUT);
@@ -382,11 +401,13 @@ int readFile(const char*pathname, void **buff, size_t *size){
 }
 
 int readNFiles(int N, const char *dirname){
+    int yes=0;
     if(dirname==NULL){
-        errno = EINVAL;
-        return -1;
+        dirname="/dev/";
+        yes=1;
     }
     char *curr_dir = cwd();
+    if(curr_dir == NULL) return -1;
     char *file_name = NULL;
     void *buff = NULL;
     size_t size =0;
@@ -415,10 +436,13 @@ int readNFiles(int N, const char *dirname){
     }
     modify_event(epoll_fd, sock_fd, EPOLLIN);
     assert(_ready_for() & EPOLLIN);
+    SIZE_FILE=0;
     while(helper_receive((void**)&file_name, &size) > 0){
-        char *name = basename(file_name);
+        char *name = !yes? basename(file_name): "null";
         FILE *f = fopen(name, "w");
         if(f == NULL){
+            printf("%s\n", name);
+            printf("FFF--\n");
             free(curr_dir);
             free(file_name);
             return -1;
@@ -431,7 +455,8 @@ int readNFiles(int N, const char *dirname){
             fclose(f);
             return -1;
         }
-        fprintf(f, "%s", (char*)buff);
+        SIZE_FILE += size;
+        fwrite(buff, sizeof(u_int8_t), size, f);
         fclose(f);
         free(buff);
         free(file_name);
@@ -447,6 +472,11 @@ int readNFiles(int N, const char *dirname){
     return 0;
 }
 
+/**
+ * @brief: saves the victim in permanent memory
+ * @param dirname: location where all victims will be saved
+ * @return 0 success, -1 fatal error.
+ */
 int _helper_victim_save(const char *dirname){
     char *name_victim =NULL;
     int res =0;
@@ -460,7 +490,7 @@ int _helper_victim_save(const char *dirname){
         free(curr_dir);
         return -1;
     }
-   while((res= helper_receive((void**)&name_victim, &size_victim)) != -1){
+    while((res= helper_receive((void**)&name_victim, &size_victim)) != -1){
         res =helper_receive(&data_victim, &size_victim);
         if(res == -1){
             if(data_victim) free(data_victim);
@@ -501,7 +531,10 @@ int _helper_victim_save(const char *dirname){
     free(curr_dir);
     return 0;
 }
-
+/**
+ * @brief: reads from socket the victim if presents the frees memory
+ * @return: 0 success, -1 fatal error
+ */
 int _helper_victim(){
     char *name_victim =NULL;
     int res =0;
@@ -526,7 +559,6 @@ int _helper_victim(){
 
 int appendToFile(const char* pathname, void *data, size_t size, const char* dirname){
     if(pathname == NULL || data == NULL || size <= 0){
-        print_error("Pass some better arguments to appendFile, bro.\n", NULL);
         errno =EINVAL;
         return -1;
     }
@@ -577,6 +609,7 @@ int writeFile(const char *pathname, const char *dirname){
     if(fp == NULL) return -1;
     res = fseek(fp, 0, SEEK_END);
     size = ftell(fp);
+    SIZE_FILE = size;
     if(size == -1) return -1;
     if(size == 0){
         errno = EINVAL;
@@ -615,29 +648,13 @@ int writeFile(const char *pathname, const char *dirname){
     return res;
 }
 
-char *get_full_path(char *file, size_t size){
-    char *curr_dir = cwd();
-    if(curr_dir == NULL){
-        return NULL;
-    }
-    size_t null_at = 0;
-    char* buf2 = realloc(curr_dir, (NAME_MAX+size+1)*sizeof(char));
-    if(buf2 == NULL){
-        print_error("Boss I failed with error: %s \n", strerror(errno));
-        free(curr_dir);
-        return NULL;
-    }
-    curr_dir = buf2;
-    null_at =strcspn(curr_dir, "\0");
-    curr_dir[null_at]='/';
-    curr_dir[null_at+1]='\0';
-    strncat(curr_dir, file, size);
-    return curr_dir;
-}
-
+/**
+ * @brief: helps main API functions to remove/lock/unlock/close file
+ * @param pathname: full path of the file to send to the server
+ * @param op:  the index to be used in the array of function.
+ */
 int _helper_l_u_c_r(const char *pathname, int op){
     if(pathname == NULL){
-        print_error("Pass some better arguments to lockFile, bro.\n", NULL);
         errno =EINVAL;
         return -1;
     }

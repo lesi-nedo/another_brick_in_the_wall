@@ -161,8 +161,6 @@ get_rand(){
  */
 int 
 _get_level(int val){
-    //if  nfiles are less then we give boost to the first position
-    //because  noticed at beginning all files are ending up in end.
     int res = val;
     int index = 0;
     if(val >= MY_CACHE->MAX_LAST_LEVEL){
@@ -268,9 +266,16 @@ int _find_dead_helper(cach_hash_t *ht, int index){
     return -1;
 }
 /**
+ * @brief: I almost went nuts because of this function.
+My idea is each threads start from position one, variable temp holds the file to be insert, check the first row for empty spots but if there are already 
+threads looking and empty rows are less than the number of threads currently presents in the level than it passes one level below. If it finds an empty spots tries to get the lock for writing the pointer in cache, and waits 
+for the lock associated at each file in store to update pointers. So if a thread finds a pointer that should not be there because it was referenced more than the level has the range or less than it tries to get the lock and 
+replaces with the fresh one, the "victim" will be placed in the correct position but if the level is full in which it belongs than the thread tries to find the closest to the correct level.
+It might happened that a thread holds a variable already dead than it releases the locks and frees the memory.
+I can guarantee(at least I hope so) that the values in cache and in files are correct, i.e each pointers are correct (tested with 100 threads running for "long time"), and there are no deadlocks relative to the part of cache and store.
  * @param curr -- starting point from which will be searched
  * @param temp -- temporary entries to hold all variables information to be insert into cache
- * @return -- 0 success 
+ * @return -- 0 success
  */
 int
  _helper_ins_rand(cach_hash_t *ht, cach_entry_t *temp, icl_entry_t *file_in_store, int index, pointers *ret){
@@ -354,7 +359,6 @@ int
                         free(temp);
                         return 0;
                     } else {
-                        // printf("TIME: %ld------%ld FILES: %s ----- %s\n", temp->time, file_in->time, (char*)file_in->key, temp->file_name);
                         MY_CACHE->buckets[index]->threads_in--;
                         //!LOCKS RELEASED
                         UNLOCK(&curr->mutex);
@@ -653,7 +657,6 @@ cach_hash_dump(FILE* stream, cach_hash_t* ht)
 {
     cach_entry_t *bucket, *curr;
     int i;
-
     if(!ht) return -1;
 
     for(i=0; i<ht->nbuckets; i++) {
@@ -688,7 +691,7 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
-                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s\n", (char*)ret->key);
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
                         curr->me_but_in_store->key = NULL;
                         ret->data = curr->me_but_in_store->data;
                         curr->me_but_in_store->data = NULL;
@@ -776,7 +779,7 @@ _helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cac
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
-                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s\n", (char*)ret->key);
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
                         curr->me_but_in_store->key = NULL;
                         ret->data = curr->me_but_in_store->data;
                         curr->me_but_in_store->data = NULL;

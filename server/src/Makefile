@@ -27,6 +27,8 @@ LIBS_TO_CHECK:=checkinstall
 COMM:= $(shell whereis $(LIBS_TO_CHECK))
 IS_THERE=$(COMM)
 
+SOCKET_NAME=../some_name
+MAIN=main
 .PHONY: clean check all
 .SUFFIXES: .c .h
 
@@ -34,8 +36,7 @@ all: ${TARGET}
 
 ${TARGET}: ${TARGET}.c  $(DIR_LINK)${LOG_TARGET}.c $(DIR_LINK)$(PARSE_TARGET).c\
 ${DIR_STOR}${TARG_STOR}.c ${DIR_STOR}${TARG_CACH}.c $(DIR_THR)$(TARG_THR).c $(DIR_SOCK)$(TARG_SOCK)
-	@${CC} ${FLAGS} ${DEB} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
-	@${RM} *.txt
+	@${CC} ${FLAGS} ${DEB} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o ../$@ ${LIB}
 
 check:
 ifeq ("$(COMM)", "$(LIBS_TO_CHECK):")
@@ -47,7 +48,7 @@ else
 endif
 
 clean:
-	@-${RM} ~core *.out *~ core $(TARGET)
+	@-${RM} ~core *.out *~ core $(TARGET) ${SOCKET_NAME} ${MAIN}
 	@for dir in $(SUBDIR); do \
 		$(MAKE) --no-print-directory -C $$dir clean; \
 	done

@@ -7,12 +7,10 @@
 
 typedef struct threads_w {
     pthread_t *my_bi;
-    pthread_t pimp;
     icl_hash_t *STORE;
     cach_hash_t *CACHE;
     int num_thr;
     int created_thr;
-    int max_buff;
     int pipe_ready_fd[2];
     int pipe_done_fd[2];
     volatile sig_atomic_t *time_to_quit;

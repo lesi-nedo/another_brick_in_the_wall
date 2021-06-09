@@ -11,7 +11,7 @@
 #include "../../includes/conn.h"
 #include <sys/epoll.h>
 #include "../../includes/thread_for_log.h"
-//REMEMBER 1 is ok, 0 the request was not ok, -1 fatal error -2 Buffer is full send request for EPOLLOUT
+//REMEMBER 1 is ok, 0 the request was not ok, -1 fatal error
 int _open_helper(int fd, char **path_ret, volatile sig_atomic_t *time_to_quit){
     size_t length = 0;
     int n = 0;
@@ -110,7 +110,9 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
     curr->ptr_tail = curr->ptr_tail+(length-1);
     size_t curr_size =STORE->total_bytes +length*sizeof(u_int8_t);
     while(curr_size > STORE->MAX_SPACE_AVAILABLE && (*time_to_quit) != 1){
+        //finds and evicts a victim from cache
         curr_size-=find_victim_no_rep(CACHE, victim, time_to_quit);
+        //if victim was modified e.i got appended that it sends back to the client
         if(victim->been_modified){
             size_t len = strlen(victim->key)+1;
             ret = _write_resp(fd, time_to_quit, len, IS_NOT_ERROR);
@@ -158,7 +160,6 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
                 return 0;
             }
         }
-        if(*time_to_quit == 1) return -1;
         #ifdef DEBUG
          assert(victim->data);
         assert(victim->key);
@@ -166,6 +167,7 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
         free(victim->data);
         free(victim->key);
         memset(victim, 0, sizeof(*victim));
+        if(*time_to_quit == 1) return -1;
     }
      //!LOCK ACQUIRED
     LOCK_IFN_RETURN(&STORE->stat_lck, -1);
@@ -280,16 +282,19 @@ int open_f_l_c (icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atom
     errno =0;
     icl_entry_t *curr = icl_hash_insert(STORE, (void *)path, NULL, 0, victim);
     if(curr == NULL){
-        
         if(errno != EEXIST) return -1;
         curr =icl_hash_find(STORE, path);
         free(path);
         if(curr == NULL){
             errno=ENODATA;
             return 0;
-        } else if(curr->O_LOCK){
+        } else if(curr->O_LOCK && curr->OWNER != *OWNER){
             errno=EPERM;
             return 0;
+        }
+        if(curr->O_LOCK){ 
+            dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s.\n", (char*) curr->key);
+            return 1;
         }
         //!LOCK ACQUIRED
         LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
@@ -715,7 +720,16 @@ int (*fun_ptr[NUM_AP])(icl_hash_t *, cach_hash_t *, int, volatile sig_atomic_t *
 
 
 
-
+/**
+ * @brief: each thread waits for the fd to serve. Each API function has a place 
+ * in the array of function, so when a client wants something it has to send the correct index,
+ * if clients send an incorrect index than server will respond with ECANCELED
+ * @param info_w: has all settings needed to delivery the result. Two pipes to read from and write to ready/served fd.
+ * time_to_quit tells all worker that the time has come to exit.
+ * STORE is where all files with data are saved, CACHE is where all pointers are placed to hopefully have an efficient cache.
+ * num_thr: total threads to be created
+ * created_thr created threads.
+ */
 static void *do_magic_you_bi(void *info_w){
     Threads_w *info = (Threads_w *)info_w;
     pointers victim;
@@ -751,46 +765,47 @@ static void *do_magic_you_bi(void *info_w){
             dprintf(ARG_LOG_TH.pipe[WRITE], "THREAD: %lu\n", pthread_self());
             ret = fun_ptr[op_OWNER[0]](info->STORE, info->CACHE, connfd, info->time_to_quit, &op_OWNER[1], &victim);
             if(ret == 1){
-                    ret =_write_resp(connfd, info->time_to_quit, op_OWNER[1], IS_NOT_ERROR);
-                    if(ret == -1){
-                        goto EXIT;
-                    }
-                    if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
-                        if(victim.data && victim.been_modified){
-                            size_t len = strlen(victim.key)+1;
-                            ret = _write_resp(connfd, info->time_to_quit, len, IS_NOT_ERROR);
-                            if(ret == -1){
-                                goto EXIT;
-                            }
-                            ret= writen(connfd, victim.key, len, info->time_to_quit);
-                            if(ret == -1){
-                                goto EXIT;
-                            }
-                            ret =  _write_resp(connfd, info->time_to_quit, victim.size_data, IS_NOT_ERROR);
-                            if(ret == -1){
-                                goto EXIT;
-                            }
-                            ret = writen(connfd, victim.data, victim.size_data, info->time_to_quit);
-                            if(ret == -1){
-                                goto EXIT;
-                            }
+                ret =_write_resp(connfd, info->time_to_quit, op_OWNER[1], IS_NOT_ERROR);
+                if(ret == -1){
+                    goto EXIT;
+                }
+                if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
+                    if(victim.data && victim.been_modified){
+                        size_t len = strlen(victim.key)+1;
+                        ret = _write_resp(connfd, info->time_to_quit, len, IS_NOT_ERROR);
+                        if(ret == -1){
+                            goto EXIT;
                         }
-                        ret = _write_resp(connfd, info->time_to_quit, 0, IS_EMPTY);
-                        if(ret == -1) goto EXIT;
+                        ret= writen(connfd, victim.key, len, info->time_to_quit);
+                        if(ret == -1){
+                            goto EXIT;
+                        }
+                        ret =  _write_resp(connfd, info->time_to_quit, victim.size_data, IS_NOT_ERROR);
+                        if(ret == -1){
+                            goto EXIT;
+                        }
+                        ret = writen(connfd, victim.data, victim.size_data, info->time_to_quit);
+                        if(ret == -1){
+                            goto EXIT;
+                        }
                     }
-                } else{
-                    _write_resp(connfd, info->time_to_quit, errno, IS_ERROR);
-                    if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
-                        ret = _write_resp(connfd, info->time_to_quit, 0, IS_ERROR);
-                        if(ret == -1) goto EXIT;
-                    }
+                    ret = _write_resp(connfd, info->time_to_quit, 0, IS_EMPTY);
                     if(ret == -1) goto EXIT;
                 }
+            } else{
+                _write_resp(connfd, info->time_to_quit, errno, IS_ERROR);
+                if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
+                    ret = _write_resp(connfd, info->time_to_quit, 0, IS_ERROR);
+                    if(ret == -1) goto EXIT;
+                }
+                if(ret == -1) goto EXIT;
+            }
+            if(*(info->time_to_quit) == 1) goto EXIT;
+            if(victim.data) free(victim.data);
+            if(victim.key) free(victim.key);
+            memset(&victim, 0 , sizeof(victim));
         }
         INSERT_INTO_PIPE:
-        if(victim.data) free(victim.data);
-        if(victim.key) free(victim.key);
-        if(*(info->time_to_quit) == 1) goto EXIT;
         ret = writen(info->pipe_done_fd[WRITE], &connfd, sizeof(connfd), info->time_to_quit);
         if(ret == -1) goto EXIT;
     }
@@ -800,7 +815,10 @@ static void *do_magic_you_bi(void *info_w){
     close(connfd);
     return NULL;
 }
-
+/**
+ * 
+ * @param info: all variables used to help the execution of do_magic_you_bi
+ */
 int kill_those_bi(Threads_w *info){
     if(info == NULL){
         errno = EINVAL;
@@ -819,14 +837,15 @@ int kill_those_bi(Threads_w *info){
     free(info->my_bi);
     return 0;
 }
-
+/**
+ * @param info: all variables to be used in the process of serving clients.
+ */
 int create_them (Threads_w *info){
     if(info->num_thr < 0){
         errno = EINVAL;
         return -1;
     }
     info->created_thr = 0;
-    info->max_buff = PIPE_BUF;
     info->my_bi = (pthread_t*)malloc(sizeof(pthread_t)*info->num_thr);
     if(info->my_bi ==NULL){
         fprintf(stderr, "Damn boy, no more memory.\n");

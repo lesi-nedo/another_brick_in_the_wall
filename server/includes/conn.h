@@ -18,8 +18,8 @@
  *   \retval  0   se durante la lettura da fd leggo EOF
  *   \retval size se termina con successo
  */
-static inline int readn(long fd, void *buf, size_t size, volatile sig_atomic_t *time_to_quit) {
-    size_t left = size;
+static inline int readn(long fd, void *buf, signed long long int size, volatile sig_atomic_t *time_to_quit) {
+    signed long long int left = size;
     int r;
     char *bufptr = (char*)buf;
     while(left>0) {
@@ -28,7 +28,7 @@ static inline int readn(long fd, void *buf, size_t size, volatile sig_atomic_t *
 	    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK){ 
             continue;
         }
-        if(errno == SIGPIPE) return 0;
+        if(errno == EPIPE) return 0;
 	    return -1;
 	}
 	if (r == 0) return 0;   // EOF
@@ -40,17 +40,17 @@ static inline int readn(long fd, void *buf, size_t size, volatile sig_atomic_t *
 /**
  * @brief: same as redn but does not wait for EAGAIN and EWOULDBOCK
  */
-static inline int readn_return(long fd, void *buf, size_t size, volatile sig_atomic_t *time_to_quit) {
-    size_t left = size;
+static inline int readn_return(long fd, void *buf, signed long long int size, volatile sig_atomic_t *time_to_quit) {
+    signed long long int left = size;
     int r;
     char *bufptr = (char*)buf;
     while(left>0) {
 	if ((r=read((int)fd ,bufptr,left)) == -1) {
         if(time_to_quit && *time_to_quit ==1) return -1;
-	    if (errno == EINTR){ 
+	    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK){ 
             continue;
         }
-        if(errno == SIGPIPE) return 0;
+        if(errno == EPIPE) return 0;
 	    return -1;
 	}
 	if (r == 0) return 0;   // EOF
@@ -66,8 +66,8 @@ static inline int readn_return(long fd, void *buf, size_t size, volatile sig_ato
  *   \retval  0   se durante la scrittura la write ritorna 0
  *   \retval  1   se la scrittura termina con successo
  */
-static inline int writen(long fd, void *buf, size_t size, volatile sig_atomic_t *time_to_quit) {
-    size_t left = size;
+static inline int writen(long fd, void *buf, signed long long int size, volatile sig_atomic_t *time_to_quit) {
+    signed long long int left = size;
     int r;
     char *bufptr = (char*)buf;
     while(left>0) {
@@ -76,7 +76,7 @@ static inline int writen(long fd, void *buf, size_t size, volatile sig_atomic_t 
 	    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK){ 
             continue;
         }
-        if(errno == SIGPIPE) return 0;
+        if(errno == EPIPE) return 0;
 	    return -1;
 	}
 	if (r == 0) return 0;

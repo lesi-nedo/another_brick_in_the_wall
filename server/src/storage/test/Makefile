@@ -11,7 +11,7 @@ TEST=test
 CHECK=check_stor
 CUR_DIR:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 CK_FORK=valgrind --leak-check=full
-DIPEND=../new.c ../files_s.c
+DIPEND=../new.c ../files_s.c ../../parse_api/thread_for_log.c
 TOOBJ=$(patsubst %.c, %.o, $(notdir $(DIPEND)))
 DIP_COV+=$(notdir $(DIPEND)) check_stor.c
 
@@ -49,3 +49,4 @@ ${CHECK}.o: $(CHECK).c
 
 clean:
 	@-${RM} *.o *.out *~ core $(COV_NAM) *.html *.txt *.gcda *.gcno *gcov
+	@-${RM} -rf ../logs 

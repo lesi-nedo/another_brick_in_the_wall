@@ -13,7 +13,7 @@
 #include "../../includes/thread_for_log.h"
 //REMEMBER 1 is ok, 0 the request was not ok, -1 fatal error
 int _open_helper(int fd, char **path_ret, volatile sig_atomic_t *time_to_quit){
-    size_t length = 0;
+    signed long long int length = 0;
     int n = 0;
     char *path = NULL;
     n=readn(fd, &length, sizeof(length), time_to_quit);
@@ -45,21 +45,19 @@ int _open_helper(int fd, char **path_ret, volatile sig_atomic_t *time_to_quit){
  * @param is_error: 1 there was an error, 0 otherwise
  */
 
-int _write_resp(int fd, volatile sig_atomic_t *time_to_quit, size_t resp, size_t is_error){
-    size_t to_write[2];
+int _write_resp(int fd, volatile sig_atomic_t *time_to_quit, signed long long int resp, signed long long int is_error){
+    signed long long int to_write[2];
     to_write[0]=is_error;
     to_write[1]=resp;
-    int n = 0;
-    n=writen(fd, to_write, sizeof(to_write), time_to_quit);
-    return n;
+    return writen(fd, to_write, sizeof(to_write), time_to_quit);
 }
 /**
  * @spec: This function should be called only when the lock is acquired.
  */
-int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr, volatile sig_atomic_t *time_to_quit, pointers *victim, size_t *OWNER){
+int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr, volatile sig_atomic_t *time_to_quit, pointers *victim, signed long long int *OWNER){
     int n = 0;
     int ret = 0;
-    size_t length = 0;
+    signed long long int length = 0;
     n=readn(fd, &length, sizeof(length), time_to_quit);
     if(n ==-1) return -1;
     if(n == 0){
@@ -67,6 +65,7 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
     }
     if(length > STORE->MAX_SPACE_AVAILABLE){
         errno =ENOMEM;
+
         return 0;
     }
     assert(length > 0);
@@ -80,7 +79,7 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
         return 0;
     }
     //tells  the client that server is ready for data
-    void*temp = realloc(curr->data, (curr->ptr_tail+length+1)*sizeof(u_int8_t));
+    void*temp = realloc(curr->data, (curr->ptr_tail+length)*sizeof(u_int8_t*));
     if(temp == NULL){
         //!LOCK RELEASED
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
@@ -93,28 +92,30 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
         return -1;
     }
-    n=readn(fd, ((u_int8_t*)curr->data)+curr->ptr_tail, length, time_to_quit);
+    
+    n=readn(fd, ((u_int8_t*)curr->data+curr->ptr_tail), length, time_to_quit);
     if(n < 0){
         //!LOCK RELEASED
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
         return -1;
     }
     if( curr->ptr_tail>0) curr->been_modified =1;
-    dprintf(ARG_LOG_TH.pipe[WRITE], "WRITE: %s.\n", (char*) curr->key);
-    dprintf(ARG_LOG_TH.pipe[WRITE], "BYTES: %zd.\n",  length);
+    curr->ptr_tail = curr->ptr_tail+(length-1) > 0? curr->ptr_tail+(length-1): 0;
+    signed long long int curr_size =STORE->total_bytes +length*sizeof(u_int8_t);
+
+    dprintf(ARG_LOG_TH.pipe[WRITE], "WRITE: %s\n", (char*) curr->key);
+    dprintf(ARG_LOG_TH.pipe[WRITE], "BYTES: %lld\n",  length);
     //!LOCK RELEASED
     UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     if(n == 0){
         return 0;
     }
-    curr->ptr_tail = curr->ptr_tail+(length-1);
-    size_t curr_size =STORE->total_bytes +length*sizeof(u_int8_t);
     while(curr_size > STORE->MAX_SPACE_AVAILABLE && (*time_to_quit) != 1){
         //finds and evicts a victim from cache
         curr_size-=find_victim_no_rep(CACHE, victim, time_to_quit);
         //if victim was modified e.i got appended that it sends back to the client
         if(victim->been_modified){
-            size_t len = strlen(victim->key)+1;
+            signed long long int len = strlen(victim->key)+1;
             ret = _write_resp(fd, time_to_quit, len, IS_NOT_ERROR);
             if(ret == -1){
                 if(victim->data)free(victim->data);
@@ -160,10 +161,14 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
                 return 0;
             }
         }
-        #ifdef DEBUG
-         assert(victim->data);
-        assert(victim->key);
-        #endif // DEBUG
+        if(victim->data == NULL){
+            if(victim->key){
+                memset(victim, 0, sizeof(*victim));
+                free(victim->key);
+            }
+            continue;
+
+        }
         free(victim->data);
         free(victim->key);
         memset(victim, 0, sizeof(*victim));
@@ -190,7 +195,7 @@ int _receive_data(icl_hash_t *STORE,cach_hash_t *CACHE,int fd, icl_entry_t *curr
  * @param victim: where to save victim.
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
-int open_f_l(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int open_f_l(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res = 0;
     char *path = NULL;
     res = _open_helper(fd, &path, time_to_quit);
@@ -217,8 +222,8 @@ int open_f_l(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
         curr->O_LOCK=1;
         curr->open=1;
         //!LOCK RELEASED
-    UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s.\n", (char*) curr->key);
+    UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     curr->OWNER = *OWNER == 0 ? CACHE->incr_entr+ID_START: *OWNER;
     *OWNER = curr->OWNER;
     return 1;
@@ -233,7 +238,7 @@ int open_f_l(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
 
-int open_f_c(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int open_f_c(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
     res = _open_helper(fd, &path, time_to_quit);
@@ -242,7 +247,7 @@ int open_f_c(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
         return res;
     }
     errno = 0;
-    icl_entry_t *curr = icl_hash_insert(STORE, (void *)path, NULL, 0, victim);
+    icl_entry_t *curr = icl_hash_insert(STORE, (void *)path, NULL, victim);
     if(curr == NULL){
         free(path);
         if(errno == EEXIST) return 0;
@@ -255,9 +260,9 @@ int open_f_c(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
     //!LOCK ACQUIRED
     LOCK_IFN_RETURN(&curr->wr_dl_ap_lck,-1);
     curr->O_LOCK = 0;
+    dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s\n", (char*) curr->key);
     //!LOCK RELEASED
     UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck,-1);
-    dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s.\n", (char*) curr->key);
     *OWNER = curr->OWNER;
     return 1;
 }
@@ -271,41 +276,45 @@ int open_f_c(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
 
-int open_f_l_c (icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int open_f_l_c (icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
+    icl_entry_t *curr = NULL;
     res = _open_helper(fd, &path, time_to_quit);
     if(res < 1){
         if(path) free(path);
         return res;
     }
     errno =0;
-    icl_entry_t *curr = icl_hash_insert(STORE, (void *)path, NULL, 0, victim);
+    curr = icl_hash_insert(STORE, (void *)path, NULL, victim);
     if(curr == NULL){
         if(errno != EEXIST) return -1;
         curr =icl_hash_find(STORE, path);
         free(path);
-        if(curr == NULL){
+        if(curr == NULL || curr->key == NULL){
             errno=ENODATA;
             return 0;
         } else if(curr->O_LOCK && curr->OWNER != *OWNER){
             errno=EPERM;
             return 0;
         }
-        if(curr->O_LOCK){ 
-            dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s.\n", (char*) curr->key);
-            return 1;
-        }
         //!LOCK ACQUIRED
         LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-        curr->O_LOCK=1;
-        curr->open=1;
+        if(!curr->empty ){
+            curr->O_LOCK=1;
+            curr->open=1;
+        } else {
+             //!LOCK RELEASED
+            UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
+            errno=ENODATA;
+            return 0;
+        }
         //!LOCK RELEASED
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     }
+    dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s\n", (char*) curr->key);
     curr->OWNER=*OWNER == 0? CACHE->incr_entr+ID_START: *OWNER;
     *OWNER = curr->OWNER;
-    dprintf(ARG_LOG_TH.pipe[WRITE], "OPEN: %s.\n", (char*) curr->key);
     return 1;
 }
 /**
@@ -318,10 +327,10 @@ int open_f_l_c (icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atom
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
 
-int read_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int read_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
-    size_t len = 0, data_len =0;
+    signed long long int len = 0, data_len =0;
     void *key = NULL, *data_file=NULL;
     res = _open_helper(fd, &path, time_to_quit);
     if(res < 1){
@@ -370,6 +379,8 @@ int read_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t 
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
         return -1;
     }
+    dprintf(ARG_LOG_TH.pipe[WRITE], "READ: %s\n", (char*) curr->key);
+    dprintf(ARG_LOG_TH.pipe[WRITE], "SENT: %lld\n", data_len);
     //!LOCK RELEASED
     UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     res = _write_resp(fd, time_to_quit, data_len, IS_NOT_ERROR);
@@ -387,8 +398,6 @@ int read_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t 
     }
     res =writen(fd, data_file, data_len, time_to_quit);
     curr->am_being_used -=1;
-    dprintf(ARG_LOG_TH.pipe[WRITE], "READ: %s\n", (char*) curr->key);
-    dprintf(ARG_LOG_TH.pipe[WRITE], "SENT: %zu\n", data_len);
     free(key);
     free(data_file);
     return res;
@@ -403,11 +412,11 @@ int read_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t 
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
 
-int read_nf(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int read_nf(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     pointers file;
-    size_t length = 0;
+    signed long long int length = 0;
     int n =0, total = 0, res =0;
-    size_t len = 0, data_len =0;
+    signed long long int len = 0, data_len =0;
     CACHE->incr_entr++;
     void *key = NULL, *data_file=NULL;
     memset(&file, 0, sizeof(pointers));
@@ -510,8 +519,8 @@ int read_nf(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t
                     free(data_file);
                     return 0;
                 }
-                dprintf(ARG_LOG_TH.pipe[WRITE], "READ: %s\n", (char*) curr->key);
-                dprintf(ARG_LOG_TH.pipe[WRITE], "SENT: %zu\n", data_len);
+                dprintf(ARG_LOG_TH.pipe[WRITE], "READ: %s\n", (char*) key);
+                dprintf(ARG_LOG_TH.pipe[WRITE], "SENT: %lld\n", data_len);
                 total++;
                 free(key);
                 free(data_file);
@@ -533,7 +542,7 @@ int read_nf(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t
  * @param victim: where to save victim.
  * @return 1 success, 0 request was not correct, -1 error happened.
  */
-int write_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int write_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
     res = _open_helper(fd, &path, time_to_quit);
@@ -573,7 +582,7 @@ int write_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t
     
 }
 
-int lock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int lock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     int resp = 0;
     char data;
@@ -597,22 +606,32 @@ int lock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t 
         return 0;
     }
     if(curr->O_LOCK && curr->OWNER == *OWNER){
+        if(curr->empty) {
+            errno=ENODATA;
+            return 0;
+        }
+        dprintf(ARG_LOG_TH.pipe[WRITE], "LOCK: %s\n", (char*) curr->key);
         return 1;
     }
     while(!(*time_to_quit)){
         //lock file or wait
         if(curr->O_LOCK == 0){
-            LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-            //we need to check again. 
-            if(curr->O_LOCK == 1){
+            if(!TRYLOCK(&curr->wr_dl_ap_lck)){
+                //we need to check again. 
+                if(curr->O_LOCK == 1){
+                    UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
+                    continue;
+                }
+                dprintf(ARG_LOG_TH.pipe[WRITE], "LOCK: %s\n", (char*) curr->key);
+                curr->O_LOCK=1;
+                curr->OWNER=*OWNER;
                 UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-                continue;
+                return 1;
             }
-            curr->O_LOCK=1;
-            curr->OWNER=*OWNER;
-            UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-            dprintf(ARG_LOG_TH.pipe[WRITE], "LOCK: %s.\n", (char*) curr->key);
-            return 1;
+        }
+        if(curr->empty) {
+            errno=ECANCELED;
+            return 0;
         }
         resp = recv(fd,&data,1, MSG_PEEK);
         if(resp == 0){
@@ -625,7 +644,7 @@ int lock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t 
     return 0;
 }
 
-int unlock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int unlock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
     res = _open_helper(fd, &path, time_to_quit);
@@ -636,7 +655,7 @@ int unlock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
     errno =0;
     icl_entry_t *curr = icl_hash_find(STORE, path);
     CACHE->incr_entr++;
-    if(curr == NULL){
+    if(curr == NULL || curr->empty){
         free(path);
         errno =ENODATA;
         return 0;
@@ -646,18 +665,19 @@ int unlock_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
         errno=ENOENT;
         return 0;
     }
+    LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     if(curr->O_LOCK && curr->OWNER == *OWNER){
-        LOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
         curr->O_LOCK = 0;
+        dprintf(ARG_LOG_TH.pipe[WRITE], "UNLOCK: %s\n", (char*) curr->key);
         UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-        dprintf(ARG_LOG_TH.pipe[WRITE], "UNLOCK: %s.\n", (char*) curr->key);
         return 1;
     }
+    UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
     errno=EPERM;
     return 0;
 }
 
-int close_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int close_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     char *path = NULL;
     res = _open_helper(fd, &path, time_to_quit);
@@ -686,11 +706,11 @@ int close_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t
     curr->open = 0;
     curr->O_LOCK=0;
     UNLOCK_IFN_RETURN(&curr->wr_dl_ap_lck, -1);
-    dprintf(ARG_LOG_TH.pipe[WRITE], "CLOSE: %s.\n", (char*) curr->key);
+    dprintf(ARG_LOG_TH.pipe[WRITE], "CLOSE: %s\n", (char*) curr->key);
     return 1;
 }
 
-int remove_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, size_t *OWNER, pointers *victim){
+int remove_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_t *time_to_quit, signed long long int *OWNER, pointers *victim){
     int res =0;
     pointers vict;
     memset(&vict, 0, sizeof(vict));
@@ -708,14 +728,14 @@ int remove_f(icl_hash_t *STORE, cach_hash_t *CACHE, int fd, volatile sig_atomic_
         errno =ENODATA;
         return 0;
     }
-    res=icl_hash_delete_ext(STORE, path, &vict, *OWNER);
+    res=icl_hash_delete_ext(STORE, path, &vict, *OWNER, time_to_quit);
     free(path);
     if(vict.data) free(vict.data);
     if(vict.key) free(vict.key);
     return res;
 }
 
-int (*fun_ptr[NUM_AP])(icl_hash_t *, cach_hash_t *, int, volatile sig_atomic_t *, size_t*,pointers *) ={open_f_l, \
+int (*fun_ptr[NUM_AP])(icl_hash_t *, cach_hash_t *, int, volatile sig_atomic_t *, signed long long int*,pointers *) ={open_f_l, \
  open_f_c, open_f_l_c, read_f, read_nf, write_f, lock_f, unlock_f, close_f, remove_f};
 
 
@@ -738,21 +758,17 @@ static void *do_magic_you_bi(void *info_w){
     int ret =0;
     // void *to_proc_data = NULL;
     // int size_data =0;
-    size_t op_OWNER[2];
+    signed long long int op_OWNER[2] ={0};
     int n = 0;
     while(*(info->time_to_quit) != 1){
-        memset(&victim, 0, sizeof(victim));
         n=readn(info->pipe_ready_fd[READ], &connfd, sizeof(int), info->time_to_quit);
         if(n < 0) goto EXIT;
         if(n == 0){
             goto INSERT_INTO_PIPE;
         }
+        dprintf(ARG_LOG_TH.pipe[WRITE], "THREAD: %lu FD: %d TIME: %ld\n", pthread_self(), connfd, time(NULL));
         if(*(info->time_to_quit) == 1) break;
-        while(readn_return(connfd, op_OWNER, sizeof(op_OWNER), info->time_to_quit)>0){
-            if(n < 0) goto EXIT;
-            if(n == 0){
-                goto INSERT_INTO_PIPE;
-            }
+        while((errno =0, readn_return(connfd, op_OWNER, sizeof(op_OWNER), info->time_to_quit))>0){
             if(*(info->time_to_quit) == 1) goto EXIT;
             if(op_OWNER[0] > NUM_AP || op_OWNER[1] > (info->CACHE->incr_entr+ID_START+2)){
                 errno=ECANCELED;
@@ -762,54 +778,79 @@ static void *do_magic_you_bi(void *info_w){
                 }
                 goto INSERT_INTO_PIPE;
             }
-            dprintf(ARG_LOG_TH.pipe[WRITE], "THREAD: %lu\n", pthread_self());
             ret = fun_ptr[op_OWNER[0]](info->STORE, info->CACHE, connfd, info->time_to_quit, &op_OWNER[1], &victim);
             if(ret == 1){
                 ret =_write_resp(connfd, info->time_to_quit, op_OWNER[1], IS_NOT_ERROR);
                 if(ret == -1){
                     goto EXIT;
                 }
+                if(ret==0) goto INSERT_INTO_PIPE;
                 if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
                     if(victim.data && victim.been_modified){
-                        size_t len = strlen(victim.key)+1;
+                        assert(victim.size_data);
+                        signed long long int len = strlen(victim.key)+1;
                         ret = _write_resp(connfd, info->time_to_quit, len, IS_NOT_ERROR);
                         if(ret == -1){
+                            printf("FFFFF\n");
                             goto EXIT;
                         }
+                        if(ret==0) goto INSERT_INTO_PIPE;
                         ret= writen(connfd, victim.key, len, info->time_to_quit);
                         if(ret == -1){
                             goto EXIT;
                         }
+                        if(ret==0) goto INSERT_INTO_PIPE;
                         ret =  _write_resp(connfd, info->time_to_quit, victim.size_data, IS_NOT_ERROR);
                         if(ret == -1){
                             goto EXIT;
                         }
+                        if(ret==0) goto INSERT_INTO_PIPE;
                         ret = writen(connfd, victim.data, victim.size_data, info->time_to_quit);
                         if(ret == -1){
                             goto EXIT;
                         }
+                        if(ret==0) goto INSERT_INTO_PIPE;
                     }
                     ret = _write_resp(connfd, info->time_to_quit, 0, IS_EMPTY);
-                    if(ret == -1) goto EXIT;
+                    if(ret==0) goto INSERT_INTO_PIPE;
+                    if(ret == -1){ 
+                        printf("FFGDS\n");
+                        goto EXIT;
+                    }
+                    if(*(info->time_to_quit) == 1) goto EXIT;
+                    if(victim.data)
+                        free(victim.data);
+                    if(victim.key)
+                        free(victim.key);
+                    memset(&victim, 0 , sizeof(victim));
                 }
             } else{
+                 if(errno == SIGPIPE && ret==0) goto INSERT_INTO_PIPE;
                 _write_resp(connfd, info->time_to_quit, errno, IS_ERROR);
-                if(op_OWNER[0] == OPEN_F_L_C || op_OWNER[0] == OPEN_F_C){
-                    ret = _write_resp(connfd, info->time_to_quit, 0, IS_ERROR);
-                    if(ret == -1) goto EXIT;
-                }
                 if(ret == -1) goto EXIT;
             }
-            if(*(info->time_to_quit) == 1) goto EXIT;
-            if(victim.data) free(victim.data);
-            if(victim.key) free(victim.key);
-            memset(&victim, 0 , sizeof(victim));
         }
         INSERT_INTO_PIPE:
+        if(errno == SIGPIPE){
+            close(connfd);
+            continue;
+        }
+        if(victim.data){ 
+            free(victim.data);
+            memset(&victim, 0 , sizeof(victim));
+            }
+        if(victim.key){ 
+            free(victim.key);
+            memset(&victim, 0 , sizeof(victim));
+        }
+        
         ret = writen(info->pipe_done_fd[WRITE], &connfd, sizeof(connfd), info->time_to_quit);
-        if(ret == -1) goto EXIT;
+        if(ret == -1){ 
+            goto EXIT;
+        }
     }
     EXIT:
+    *info->time_to_quit = 1;
     if(victim.data) free(victim.data);
     if(victim.key) free(victim.key);
     close(connfd);
@@ -824,7 +865,7 @@ int kill_those_bi(Threads_w *info){
         errno = EINVAL;
         return -1;
     }
-    for(size_t i = 0; i < info->created_thr; i++){
+    for(signed long long int i = 0; i < info->created_thr; i++){
         if(pthread_join(info->my_bi[i], NULL) != 0){
             errno = EFAULT;
             return -1;
@@ -851,7 +892,7 @@ int create_them (Threads_w *info){
         fprintf(stderr, "Damn boy, no more memory.\n");
         return -1;
     }
-    for(size_t i = 0; i < info->num_thr; i++){
+    for(signed long long int i = 0; i < info->num_thr; i++){
         if(pthread_create(&(info->my_bi[i]), NULL, do_magic_you_bi, (void*)info) != 0){
             kill_those_bi(info);
             errno = EFAULT;

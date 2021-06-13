@@ -162,27 +162,7 @@ static inline int msleep(long miliseconds)
    return nanosleep(&req , &rem);
 }
 
-static inline char *rand_string(char *str, size_t size)
-{
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK";
-    if (size) {
-        long res1= 0;
-        struct drand48_data buff;
-        unsigned long seed = pthread_self()^getpid();
-        --size;
-        for (size_t n = 0; n < size; n++) {
-            seed += time(0);
-            seed ^=~clock();
-            seed -= clock();
-            srand48_r(seed, &buff);
-            lrand48_r(&buff, &res1);
-            int key = res1 % (int) (sizeof charset - 1);
-            str[n] = charset[key];
-        }
-        str[size] = '\0';
-    }
-    return str;
-}
+
 
 static inline int isFloat(const char* s, float* n) {
   if (s==NULL) return 1;

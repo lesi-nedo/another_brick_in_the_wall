@@ -57,7 +57,7 @@
         else succ; \
     }\
     if(res < 0){ \
-        printf("\033[1;31mFailed.\033[0;37m\n");\
+        printf("\033[1;31m"#fun" Failed.\033[0;37m\n");\
         exit(EXIT_FAILURE); \
     }
 #define EXEC_COMD(COMD, ind, fun, api_name, save_file)\
@@ -74,7 +74,7 @@
                     path = realpath(comd[COMD].names[ind]+begin, NULL);\
                     if(path == NULL){\
                         printf("\033[1;96m"#api_name"\033[1;37m:\n"); \
-                        FAILURE("Failed. \nerrno:%s\n", strerror(errno));\
+                        FAILURE(#api_name" Failed. \nerrno:%s\n", strerror(errno));\
                     }\
                     fun;\
                     begin =dot+1;\
@@ -82,9 +82,9 @@
                     free(path);\
                 }\
                 dot++;\
-                msleep(comd[t].n);\
             }\
             ind++;\
+            msleep(comd[t].n);\
         }\
     }
 #define DEFAUL_SECONDS 1
@@ -129,7 +129,7 @@ int fn(const char*fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf){
  * @return nada
  */
 
-void save_file(char *file_name, const char *dirname, void *buff, size_t size){
+void save_file(char *file_name, const char *dirname, void *buff, signed long long int size){
     if(dirname == NULL){
         dirname = "/dev/";
         file_name ="null";
@@ -182,14 +182,25 @@ void _free_comd(Commands comd[NUM_ARGS]){
 int main (int argc, char **argv){
     int opt=0;
     int res =0;
-    // int n=0;
     void *buff = NULL;
-    size_t size =0;
+    signed long long int size =0;
     struct timespec abs;
     abs.tv_sec = DEFAUL_SECONDS;
     abs.tv_nsec= DEFAULT_NANSEC;
     int ind =0;
     long num =0;
+    char *num_id =NULL;
+    num_id=(char *)calloc(MAX_FD, sizeof(char));
+    FILE *fl_id = fopen("my_id.txt", "r");
+    if(num_id ==NULL|| fl_id == NULL){
+        print_error("something shady is going on I'm out.\nerrno:%s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    fgets(num_id, MAX_FD, fl_id);
+    res = atoi(num_id);
+    LOCK_ID=res;
+    free(num_id);
+    fclose(fl_id);
     for(size_t i=0; i<NUM_ARGS; i++){
         comd[i].command=0;
         comd[i].num_args=0;
@@ -336,7 +347,6 @@ int main (int argc, char **argv){
     }
     API_CALL(comd[p].command, openConnection, res, SUCCESS("Connection established.\n", NULL),
     FAILURE("Could not established the connection\n", NULL), _free_comd(comd), SOCK_NAME, comd[t].n, abs);
-    LOCK_ID=201;
 
     if(comd[D].command){
         VICTIM_PLACE = comd[D].names[0];
@@ -367,26 +377,26 @@ int main (int argc, char **argv){
     EXEC_COMD(r, ind, API_CALL(comd[p].command, readFile, res, SUCCESS("Read file: %s. Bytes: %zu\n", path, size),\
         FAILURE("Read failed.\nerrno:%s\n", strerror(errno)), _free_comd(comd), path, &buff, &size), readFile, \
         save_file(path, comd[d].names[0]?comd[d].names[0]: NULL, buff, size));
-
+    fflush(stdout);
 
     msleep(comd[t].n);
     
     EXEC_COMD(l, ind, API_CALL(comd[p].command, lockFile, res, SUCCESS("File locked:%s\n", path),   \
         FAILURE("failed lockFile.\nerrno:%s\n", strerror(errno)), _free_comd(comd), path), lockFile, NULL);
-        
+        fflush(stdout);
     msleep(comd[t].n);
     
     EXEC_COMD(u, ind, API_CALL(comd[p].command, unlockFile, res, SUCCESS("File unlocked:%s\n", path),   \
         FAILURE("failed unlockFile.\nerrno:%s\n", strerror(errno)), _free_comd(comd), path), unlockFile, NULL);
-
+        fflush(stdout);
     msleep(comd[t].n);
-
+        fflush(stdout);
     EXEC_COMD(c, ind, API_CALL(comd[p].command, removeFile, res, SUCCESS("File removed:%s\n", path),   \
         FAILURE("failed removeFile.\nerrno:%s\n", strerror(errno)), _free_comd(comd), path), removeFile, NULL);
-        
+        fflush(stdout);
     if(buff) free(buff);
     _free_comd(comd);
     closeConnection(SOCK_NAME);
-    return EXIT_SUCCESS;
+    return LOCK_ID;
 
 }

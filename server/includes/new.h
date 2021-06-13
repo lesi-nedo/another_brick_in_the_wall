@@ -18,12 +18,12 @@ extern "C" {
 struct pass_pointers {
     void *key;
     void *data;
-    size_t size_data;
+    signed long long int size_data;
     int been_modified;
 };
 
 struct cach_entry_s {
-    unsigned long int am_dead;
+    long int am_dead;
     icl_entry_t *me_but_in_store;
     //importance of item
     unsigned long int *ref;
@@ -86,13 +86,16 @@ get_seed(pthread_t);
 unsigned long int
 get_rand();
 
+signed int
+get_rand_diff();
+
 int
  cach_hash_insert_bind(cach_hash_t *, icl_entry_t *, pointers *);
 
 int
 cach_hash_destroy(cach_hash_t *),
     cach_hash_dump(FILE *, cach_hash_t *);
-ssize_t
+signed long long int
 find_victim_no_rep(cach_hash_t *, pointers *, volatile sig_atomic_t *time_to_quit);
 
 #if defined(c_plusplus) || defined(__cplusplus)

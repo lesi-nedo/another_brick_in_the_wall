@@ -1,0 +1,26 @@
+#This is a comment
+#IMPORTANT: REMEMBER TO UPDATE "num_avail_settings, BASE_MOD,
+#available_settings" if you add a valid configuration name.
+#Number of active threads serving connections
+WORKERS=8
+#Maximum number of files that can be in memory
+MAX_NUM_FILES=100
+#Maximum size of files that can be in memory
+MAX_ACC_SIZE=32mb #acceptable formats are [kb[KB], mb[MB], gb[GB]]
+#Name for socket file
+SOCKET_NAME="some_name"
+#Log file Name
+LOG_FILE_NAME="hey.log"
+#How many levels of importance in cache
+CACHE_NUM_LEVELS=7
+#Range for each level, it gets multiplied by each level number i.e
+#CACHE_RANGE*i where 0 <= i < MAX_NUM_LEVELS and starting from end;
+#so for example at level CACHE_NUM_LEVELS - 1 we will have files that have been 
+#referenced at least CACHE_RANGE*0 to CACHE_RANGE*1 but excluding just inserted files.
+#It only implies in one way, it is not guaranteed that the only files that are referenced int range of the level
+#are 100% inside that level.
+#must be > 1
+CACHE_RANGE=3
+#This value gets multiplied by MAX_NUM_FILES to create extra space in cache 
+#hopefully for better performance.
+EXTRA_CACHE_SPACE=0.02

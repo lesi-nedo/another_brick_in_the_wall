@@ -12,14 +12,13 @@ TARG_SOCK=api_sock
 TARGET=main
 
 
-.PHONY: clean all
+.PHONY: all clean 
 .SUFFIXES: .c .h
 
 all: ${TARGET}
-
 
 ${TARGET}: ${TARGET}.c ${DIR_SOCK}${TARG_SOCK}.c
 	@${CC} ${FLAGS} ${OPT} ${GNU} ${DEBUG} ${STD} $^ -o $@ ${LIB}
 
 clean:
-	${RM} ${TARGET}
+	@-${RM} ${TARGET}

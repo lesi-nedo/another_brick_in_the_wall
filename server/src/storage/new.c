@@ -32,7 +32,7 @@ cach_hash_create(struct Cache_settings sett, unsigned int (*hash_function)(unsig
     cach_hash_t *ht;
     int i;
     int res= 0;
-    size_t pos_row =0;
+    signed long long int pos_row =0;
     int extr = 0;
 
     ht = (cach_hash_t*) malloc(sizeof(cach_hash_t));
@@ -558,7 +558,7 @@ int
     //We should finish here if we didn't have enough space in the row
     //to insert an entry, so we give a bust to the file to fit an arbitrary row that ha an empty slot
     MY_CACHE->buckets[index]->threads_in--;
-    if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE-1 || FILES_STORAGE->total_bytes >= MY_CACHE->MAX_SPACE_AVAILABLE){
+    if(MY_CACHE->nfiles >= MY_CACHE->START_INI_CACHE || FILES_STORAGE->total_bytes >= MY_CACHE->MAX_SPACE_AVAILABLE){
         find_victim(ht, ret, temp);
         free(temp);
         return 0;
@@ -606,7 +606,7 @@ int cach_hash_insert_bind(cach_hash_t *ht, icl_entry_t *file_in, pointers *ret)
 {
     ht->incr_entr++;
     int index = _get_level(ht->incr_entr-file_in->ref);
-    cach_entry_t *temp_ent = bind_two_tables_create_entry(&*file_in, index);
+    cach_entry_t *temp_ent = bind_two_tables_create_entry(file_in, index);
     if(temp_ent == NULL){
         return -1;
     }
@@ -677,11 +677,11 @@ cach_hash_dump(FILE* stream, cach_hash_t* ht)
 int
 _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, cach_entry_t *repl){
     while(curr != NULL){
-        if(!curr->am_dead && !curr->me_but_in_store->am_being_used){
-            #ifdef DEBUG
-            assert(curr->me_but_in_store->am_being_used >= 0);
-            #endif // DEBUG
+        if((!curr->am_dead && !curr->me_but_in_store->am_being_used)){
             if(TRYLOCK(&curr->mutex) == 0){
+                #ifdef DEBUG
+                assert(curr->me_but_in_store->am_being_used >= 0);
+                #endif // DEBUG
                 //!LOCK ACQUIRED
                 if(!curr->am_dead){
                     pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
@@ -691,20 +691,23 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
-                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
-                        curr->me_but_in_store->key = NULL;
+                        if(curr->file_name!=NULL){ 
+                            dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
+                            dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
+
+                        }
                         ret->data = curr->me_but_in_store->data;
-                        curr->me_but_in_store->data = NULL;
                         ret->size_data = curr->me_but_in_store->ptr_tail+1;
+                        while(ret->size_data == 0 && curr->me_but_in_store->ptr_tail > 0) ret->size_data=curr->me_but_in_store->ptr_tail+1;
+                        while(!ret->data && curr->me_but_in_store->data) ret->data =curr->me_but_in_store->data;
+                        while(!ret->key && curr->me_but_in_store->key) ret->key =curr->me_but_in_store->key;
+                        curr->me_but_in_store->data = NULL;
+                        curr->me_but_in_store->key = NULL;
                         LOCK(&FILES_STORAGE->stat_lck);
                         FILES_STORAGE->nentries--;
                         FILES_STORAGE->total_victims++;
                         if(ret->data){
-                            long long test = FILES_STORAGE->total_bytes;
                             FILES_STORAGE->total_bytes -= (curr->me_but_in_store->ptr_tail+1)*sizeof(u_int8_t);
-                            #ifdef DEBUG
-                            assert(test > FILES_STORAGE->total_bytes);
-                            #endif // DEBUG
                         }
                         UNLOCK(&FILES_STORAGE->stat_lck);
                         curr->me_but_in_store->ref = 0;
@@ -763,27 +766,51 @@ find_victim(cach_hash_t *ht, pointers *ret, cach_entry_t *repl){
 }
 
 int
-_helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, ssize_t *num_bytes){
+_helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, signed long long int *num_bytes){
     while(curr != NULL){
-        if(!curr->am_dead && curr->me_but_in_store->am_being_used<=0 && curr->me_but_in_store->ptr_tail>0){
-            #ifdef DEBUG
-            assert(curr->me_but_in_store->am_being_used >= 0);
-            #endif // DEBUG
+        if(!curr->am_dead && curr->me_but_in_store && curr->me_but_in_store->am_being_used<=0){
             if(TRYLOCK(&curr->mutex) == 0){
+                 #ifdef DEBUG
+                assert(curr->me_but_in_store->am_being_used >= 0);
+                #endif // DEBUG
                 //!LOCK ACQUIRED
                 if(!curr->am_dead){
                     pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
                     if(!TRYLOCK(THIS_IS_LCK)){
+                        //From tests it emerged that data gets delete i.e in the above if is true but the thread gets the lock is not true
+                        if(curr->me_but_in_store->data == NULL){
+                            curr->me_but_in_store->ptr_tail=0;
+                            UNLOCK(THIS_IS_LCK);
+                            UNLOCK(&curr->mutex);
+                            if(tail_or_head){
+                                curr = curr->prev;
+                            } else curr = curr->next;
+                            continue;
+                        }
+                        if(curr->am_dead || curr->file_name == NULL){
+                            curr->am_dead=1;
+                            UNLOCK(THIS_IS_LCK);
+                            UNLOCK(&curr->mutex);
+                            if(tail_or_head){
+                                curr = curr->prev;
+                            } else curr = curr->next;
+                            continue;
+                        }
                         //!LOCK ACQUIRED
                         curr->am_dead = 1;
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
                         dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
-                        curr->me_but_in_store->key = NULL;
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
                         ret->data = curr->me_but_in_store->data;
-                        curr->me_but_in_store->data = NULL;
                         ret->size_data = curr->me_but_in_store->ptr_tail+1;
+                        while(ret->size_data == 0 && curr->me_but_in_store->ptr_tail > 0) ret->size_data=curr->me_but_in_store->ptr_tail+1;
+                        while(!ret->data && curr->me_but_in_store->data) ret->data =curr->me_but_in_store->data;
+                        while(!ret->key && curr->me_but_in_store->key) ret->key =curr->me_but_in_store->key;
+                        curr->me_but_in_store->data = NULL;
+                        curr->me_but_in_store->key = NULL;
+                        assert(ret->size_data);
                         LOCK(&FILES_STORAGE->stat_lck);
                         MY_CACHE->nfiles--;
                         MY_CACHE->buckets[index]->num_dead++;
@@ -791,16 +818,11 @@ _helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cac
                         FILES_STORAGE->nentries--;
                         FILES_STORAGE->total_victims++;
                         if(ret->data){
-                            long long test = FILES_STORAGE->total_bytes;
-                            *num_bytes =  (curr->me_but_in_store->ptr_tail+1)*sizeof(u_int8_t);
+                            *num_bytes =  (curr->me_but_in_store->ptr_tail)*sizeof(u_int8_t);
                             FILES_STORAGE->total_bytes -= (*num_bytes);
-                            #ifdef DEBUG
-                            assert(test > FILES_STORAGE->total_bytes);
-                            #endif // DEBUG
                         }
                         UNLOCK(&FILES_STORAGE->stat_lck);
                         curr->me_but_in_store->ref = 0;
-                        curr->me_but_in_store->ptr_tail=0;
                         curr->me_but_in_store->am_being_used = 0;
                         curr->me_but_in_store->me_but_in_cache = NULL;
                         curr->me_but_in_store->OWNER = 0;
@@ -836,11 +858,11 @@ _helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cac
  * @param time_to_quit: signal handler variable.
  * @return -- Numbers of bytes deleted.
  */
-ssize_t
+signed long long int
 find_victim_no_rep(cach_hash_t *ht, pointers *ret, volatile sig_atomic_t *time_to_quit){
     volatile int check = -1;
     int index = 0;
-    ssize_t num_bytes = 0;
+    signed long long int num_bytes = 0;
     index =ht->NUM_GROUP-1;
     //0 for head, 1 tail
     while(check && *time_to_quit != 1){

@@ -19,7 +19,7 @@ char *SOCK_NAME = NULL;
 int sock_fd = -1;
 int epoll_fd = 0;
 struct epoll_event events[MAX_EVENTS];
-size_t LOCK_ID = 0;
+signed long long int LOCK_ID = 0;
 long SIZE_FILE =0;
 
 
@@ -166,10 +166,10 @@ int _ready_for(){
  * @return 0 success, -1 fatal error.
  */
 
-int _helper_send(const char *pathname, size_t *ret){
-    size_t to_wrt = 0;
+int _helper_send(const char *pathname, signed long long int *ret){
+    signed long long int to_wrt = 0;
     //resp[0] if 1 then it went something wrong and in resp[1] will be save errno value
-    size_t resp[2];
+    signed long long int resp[2];
     resp[0]=0;
     resp[1]=0;
     int res = 0;
@@ -196,9 +196,9 @@ int _helper_send(const char *pathname, size_t *ret){
  * @param len: the length of the data
  * @return: 1 success, 0 server was closed, -1 fatal error has occured
  */
-int _helper_send_data(void *data, size_t len){
+int _helper_send_data(void *data, signed long long int len){
     int res =0;
-    size_t resp[2] = {0};
+    signed long long int resp[2] = {0};
     res = write_to(epoll_fd, sock_fd, &len, sizeof(len));
     modify_event(epoll_fd, sock_fd, EPOLLIN);
     assert(_ready_for() & EPOLLIN);
@@ -220,9 +220,9 @@ int _helper_send_data(void *data, size_t len){
  * @param size: size of data read from server.
  * @return 1 success, 0 closed server -1 error
  */
-int helper_receive(void **buff, size_t *size){
+int helper_receive(void **buff, signed long long int *size){
     int res = 0;
-    size_t resp[2];
+    signed long long int resp[2];
     resp[0]=0;
     resp[1]=0;
     res = read_from(epoll_fd, sock_fd, resp, sizeof(resp));
@@ -233,7 +233,7 @@ int helper_receive(void **buff, size_t *size){
     }
     *size=resp[1];
     assert(*size > 0);
-    *buff=(void *)calloc(*size, sizeof(u_int8_t));
+    *buff=(void *)calloc(*size, sizeof(char));
     if(buff  == NULL){
         return -1;
     }
@@ -306,7 +306,7 @@ int openFile(const char *pathname, int flags){
         errno = EINVAL;
         return -1;
     }
-    size_t to_wrt_ID[2];
+    signed long long int to_wrt_ID[2];
     to_wrt_ID[0] = 0;
     to_wrt_ID[1] = LOCK_ID;
     int res =0;
@@ -365,12 +365,12 @@ char* cwd() {
 }
 
 
-int readFile(const char*pathname, void **buff, size_t *size){
+int readFile(const char*pathname, void **buff, signed long long int *size){
     if(pathname==NULL || buff==NULL || size==NULL){
         errno = EINVAL;
         return -1;
     }
-    size_t to_wrt_ID[2];
+    signed long long int to_wrt_ID[2];
     int res = 0;
     to_wrt_ID[0] = READ_F;
     to_wrt_ID[1] = LOCK_ID;
@@ -410,12 +410,12 @@ int readNFiles(int N, const char *dirname){
     if(curr_dir == NULL) return -1;
     char *file_name = NULL;
     void *buff = NULL;
-    size_t size =0;
-    size_t to_wrt_N = 0;
+    signed long long int size =0;
+    signed long long int to_wrt_N = 0;
     if(N <= 0){
         to_wrt_N = 0;
     } else to_wrt_N = N;
-    size_t to_wrt_ID[2];
+    signed long long int to_wrt_ID[2];
     int res = 0;
     to_wrt_ID[0] = READ_NF;
     to_wrt_ID[1] = LOCK_ID;
@@ -440,9 +440,7 @@ int readNFiles(int N, const char *dirname){
     while(helper_receive((void**)&file_name, &size) > 0){
         char *name = !yes? basename(file_name): "null";
         FILE *f = fopen(name, "w");
-        if(f == NULL){
-            printf("%s\n", name);
-            printf("FFF--\n");
+        if(f == NULL){           
             free(curr_dir);
             free(file_name);
             return -1;
@@ -456,7 +454,7 @@ int readNFiles(int N, const char *dirname){
             return -1;
         }
         SIZE_FILE += size;
-        fwrite(buff, sizeof(u_int8_t), size, f);
+        fwrite(buff, sizeof(char), size, f);
         fclose(f);
         free(buff);
         free(file_name);
@@ -480,7 +478,7 @@ int readNFiles(int N, const char *dirname){
 int _helper_victim_save(const char *dirname){
     char *name_victim =NULL;
     int res =0;
-    size_t size_victim = 0;
+    signed long long int size_victim = 0;
     void *data_victim = NULL;
     char *curr_dir = cwd();
     if(curr_dir == NULL){
@@ -506,7 +504,7 @@ int _helper_victim_save(const char *dirname){
             free(curr_dir);
             return -1;
         }
-        res = fwrite(data_victim,sizeof(u_int8_t), size_victim, fp);
+        res = fwrite(data_victim,sizeof(char), size_victim, fp);
         if(res != size_victim){
             free(name_victim);
             free(data_victim);
@@ -538,7 +536,7 @@ int _helper_victim_save(const char *dirname){
 int _helper_victim(){
     char *name_victim =NULL;
     int res =0;
-    size_t size_victim = 0;
+    signed long long int size_victim = 0;
     void *data_victim = NULL;
     while((res= helper_receive((void**)&name_victim, &size_victim)) != -1){
     res =helper_receive(&data_victim, &size_victim);
@@ -550,20 +548,20 @@ int _helper_victim(){
     free(name_victim);
     free(data_victim);
     }
-    if(res == -1 && errno > 0){ 
+    if(res == -1 && errno > 0){
         if(name_victim) free(name_victim);
         return -1;
     }
     return 0;
 }
 
-int appendToFile(const char* pathname, void *data, size_t size, const char* dirname){
+int appendToFile(const char* pathname, void *data, signed long long int size, const char* dirname){
     if(pathname == NULL || data == NULL || size <= 0){
         errno =EINVAL;
         return -1;
     }
     int res = 0;
-    size_t to_wrt_ID[2];
+    signed long long int to_wrt_ID[2];
     to_wrt_ID[0] = WRITE_F;
     to_wrt_ID[1] = LOCK_ID;
     res = modify_event(epoll_fd, sock_fd, EPOLLOUT);
@@ -575,7 +573,7 @@ int appendToFile(const char* pathname, void *data, size_t size, const char* dirn
     if(res == -1){
         return -1;
     }
-    size_t my_id = 0;
+    signed long long int my_id = 0;
     res = _helper_send(pathname, &my_id);
     if(res == -1){
         return -1;
@@ -587,6 +585,7 @@ int appendToFile(const char* pathname, void *data, size_t size, const char* dirn
     if(res == -1){
         return -1;
     }
+
     assert(_ready_for() & EPOLLOUT);
     res = _helper_send_data(data, size);
     if(res == -1) return -1;
@@ -602,7 +601,7 @@ int writeFile(const char *pathname, const char *dirname){
         errno =EINVAL;
         return -1;
     }
-    long size = 0;
+    signed long long int size = 0;
     int res = 0;
     void *data = NULL;
     FILE *fp = fopen(pathname, "r");
@@ -616,7 +615,7 @@ int writeFile(const char *pathname, const char *dirname){
         return -1;
     }
     res = fseek(fp, 0, SEEK_SET);
-    data = calloc(size, sizeof(u_int8_t));
+    data = calloc(size, sizeof(char));
     if(data == NULL || res == -1){
         return -1;
     }
@@ -631,12 +630,6 @@ int writeFile(const char *pathname, const char *dirname){
         free(data);
         return -1;
     }
-    res = modify_event(epoll_fd, sock_fd, EPOLLIN);
-    if(res == -1){
-        free(data);
-        return -1;
-    }
-    assert(_ready_for() & EPOLLIN);
     if(dirname) res = _helper_victim_save(dirname);
     else res = _helper_victim();
     if(res == -1){ 
@@ -659,7 +652,7 @@ int _helper_l_u_c_r(const char *pathname, int op){
         return -1;
     }
     int res = 0;
-    size_t to_wrt_ID[2];
+    signed long long int to_wrt_ID[2];
     to_wrt_ID[0] = op;
     to_wrt_ID[1] = LOCK_ID;
     res = modify_event(epoll_fd, sock_fd, EPOLLOUT);

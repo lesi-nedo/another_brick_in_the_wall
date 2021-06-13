@@ -5,7 +5,7 @@ temps=()
 #   exit 0;
 # fi
 
-awk -F ': ' '{print $3}' storage.txt > temp2.txt
+awk -F ': ' '{print $2}' storage.txt | awk -F ' ' '{print $1}'  > temp2.txt
 awk -F ': ' '{print $2}' storage.txt | awk -F ' ' '{print $1}' > temp.txt
 
 echo -e "\033[1;34mIf you see only this than diff between files in cache and in storage went well.\033[0;m"

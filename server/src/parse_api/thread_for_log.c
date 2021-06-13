@@ -65,6 +65,7 @@ void *log_to_file(void *arg_th){
     lc_tm = *localtime_r(&now, &r_tm);
     fprintf(fl_log, "<-------------------------USER: %s  DATE END: %d-%02d-%02d  %02d:%02d------------------------->\n",user, lc_tm.tm_year+1900, lc_tm.tm_mon+1, lc_tm.tm_mday, lc_tm.tm_hour, lc_tm.tm_min);
     fprintf(stdout,"\033[1;36mLog  thread has ended.\033[0;37m\n");
+    fflush(fl_log);
     fclose(fl_log);
     return NULL;
 }

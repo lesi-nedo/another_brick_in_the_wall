@@ -28,8 +28,8 @@ COMM:= $(shell whereis $(LIBS_TO_CHECK))
 IS_THERE=$(COMM)
 
 SOCKET_NAME=../some_name
-MAIN=main
-.PHONY: clean check all
+MAIN=../main
+.PHONY:   all check clean
 .SUFFIXES: .c .h
 
 all: ${TARGET}

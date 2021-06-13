@@ -13,6 +13,7 @@ typedef struct icl_entry_s icl_entry_t;
 typedef struct icl_hash_s icl_hash_t;
 
 #include "new.h"
+#include <signal.h>
 
 #if defined(c_plusplus) || defined(__cplusplus)
 extern "C" {
@@ -24,9 +25,9 @@ struct icl_entry_s {
     void *data;
     unsigned long int ref;
     int been_modified;
-    size_t OWNER;
+    signed long long int OWNER;
     int O_LOCK;
-    size_t ptr_tail;
+    signed long long int ptr_tail;
     int open;
     long int am_being_used;
     pthread_mutex_t wr_dl_ap_lck;
@@ -60,13 +61,13 @@ icl_entry_t
 * icl_hash_find(icl_hash_t *, void* );
 
 icl_entry_t
-* icl_hash_insert(icl_hash_t *, void*, void *, size_t, pointers *);
+* icl_hash_insert(icl_hash_t *, void*, void *, pointers *);
 
 int
 icl_hash_destroy(icl_hash_t *, void (*)(void*), void (*)(void*)),
     icl_hash_dump(FILE *, icl_hash_t *);
 
-int icl_hash_delete_ext( icl_hash_t *, void*, pointers *, size_t );
+int icl_hash_delete_ext( icl_hash_t *, void*, pointers *, signed long long int, volatile sig_atomic_t * );
 
 
 /* compare function */

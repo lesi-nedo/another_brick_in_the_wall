@@ -67,7 +67,6 @@ void cache_init_sett(Server_conf settings[], struct Cache_settings *sett){
                 sett->EXTRA_CACHE_SPACE = settings[hashed_val].value_float;
                 break;
             default:
-            printf("%zd --- ", i);
                 printf("\033[1;35mSomething went terribly wrong.\033[1;37m\n");
                 break;
         }
@@ -271,7 +270,6 @@ THATS_ALL_FOLKS:
     sig_teller = 1;
     dprintf(ARG_LOG_TH.pipe[WRITE],"TOTAL FILES IN STORE: %ld\n", FILES_STORAGE->nentries);
     sched_yield();
-    printf("\n");
     ARG_LOG_TH.sign = 1;
     close(ARG_LOG_TH.pipe[WRITE]);
     kill_those_bi(&my_bi);
@@ -301,7 +299,6 @@ THATS_ALL_FOLKS:
     free(events);
     pthread_join(th_logger, NULL);
     chdir("../server");
-    printf("%s\n", cwd());
     unlink(SOCK_NAME);
     for(size_t i = 0; i< num_avail_settings; i++){
             if(all_settings[i].str_or_int == 0){

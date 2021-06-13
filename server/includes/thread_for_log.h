@@ -2,7 +2,7 @@
 #define thread_for_log_h
 
 
-#define LOGS "../../logs/"
+#define LOGS "../logs/"
 #define READ 0
 #define WRITE 1
 #define MAX_ITER_THEN_STOP 20

@@ -8,6 +8,7 @@
 #include <signal.h>
 #include "../../../includes/new.h"
 #include "../../../includes/util.h"
+#include "../../../includes/thread_for_log.h"
 
 
 /*
@@ -50,8 +51,8 @@
 static volatile sig_atomic_t sig = 0;
 icl_hash_t *FILES_STORAGE = NULL;
 cach_hash_t *MY_CACHE = NULL;
-pthread_mutex_t TO_FREE_LCK = PTHREAD_MUTEX_INITIALIZER; 
-
+pthread_mutex_t TO_FREE_LCK = PTHREAD_MUTEX_INITIALIZER;
+Arg_log_th ARG_LOG_TH;
 
 char **create_matr(size_t row, size_t col){
     char **to_ret = (char **)malloc(row*sizeof(char *));
@@ -87,6 +88,32 @@ static void sig_hand(int sign){
     }
 }
 
+void *log_to_file(void *arg_th);
+
+int srand48_r(long int seedval, struct drand48_data *buffer);
+int lrand48_r(struct drand48_data *buffer, long int *result);
+
+static inline char *rand_string(char *str, signed long long int size)
+{
+    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJK";
+    if (size) {
+        long res1= 0;
+        struct drand48_data buff;
+        unsigned long seed = pthread_self()^getpid();
+        --size;
+        for (size_t n = 0; n < size; n++) {
+            seed += time(0);
+            seed ^=~clock();
+            seed -= clock();
+            srand48_r(seed, &buff);
+            lrand48_r(&buff, &res1);
+            int key = res1 % (int) (sizeof charset - 1);
+            str[n] = charset[key];
+        }
+        str[size] = '\0';
+    }
+    return str;
+}
 
 void* isrt_rand(void *args_th){
     int res = 2;
@@ -116,7 +143,7 @@ void* isrt_rand(void *args_th){
         //sleep(rand_sleep);
         // sleep(1);
         fprintf(args->op, "%s\n", rand_t[i]);
-        icl_entry_t *curr = icl_hash_insert(args->stor, rand_t[i], NULL, 0, &ret);
+        icl_entry_t *curr = icl_hash_insert(args->stor, rand_t[i], NULL, &ret);
         if(curr!= NULL){
             curr->O_LOCK = 0;
             curr->open =0;
@@ -127,7 +154,7 @@ void* isrt_rand(void *args_th){
             char *rand_str_del = rand_t[get_rand() % (i+1)];
             // sleep(rand_sleep);
             errno = 0;
-            res = icl_hash_delete_ext(args->stor, rand_str_del, &ret,0);
+            res = icl_hash_delete_ext(args->stor, rand_str_del, &ret,0, 0);
             if(res == 1) fprintf(args->all_deletes, "%s\n", rand_str_del);
             else fprintf(args->not_del, "%s\n", rand_str_del);
             // rand_sleep = get_rand() % MOD_SLEEP;
@@ -158,7 +185,7 @@ void* isrt_rand(void *args_th){
                 // sleep(rand_sleep);
                     rand_string(to_ins[si], LENGTH_RAND_STR);
                     fprintf(args->op, "%s\n", to_ins[si]);
-                    icl_entry_t *curr = icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, 0, &ret);
+                    icl_entry_t *curr = icl_hash_insert(FILES_STORAGE, to_ins[si], NULL, &ret);
                     if(curr!= NULL){
                         curr->O_LOCK = 0;
                         curr->open =0;
@@ -230,7 +257,19 @@ START_TEST(test_parse){
         args.sync_thr = NUM_THREADS-i;
 
     }
-    
+    ARG_LOG_TH.sign = 0;
+    ARG_LOG_TH.file_name = "test_check.log";
+    if(pipe(ARG_LOG_TH.pipe) == -1){
+        res = errno;
+        exit(EXIT_FAILURE);
+    }
+    pthread_t th_logger = 0;
+    //Creates a thread to manage all logs
+    //if there are no readers and pipe is open dprinf gets stuck.
+    //or buff gets full //!BE CAREFUL
+    if((res=pthread_create(&th_logger, NULL, &log_to_file, (void *)&ARG_LOG_TH)) != 0){
+        exit(EXIT_FAILURE);
+    }
     for(size_t i=0; i < SIZE_M; i++){
         icl_entry_t*curr = NULL;
         printf("\033[1A\033[1;32mMAIN##: %zd I'M Still Running-%zd\033[0;37m\033[s\n", pthread_self(), i);
@@ -239,7 +278,7 @@ START_TEST(test_parse){
         // sleep(ran_s+2);
         rand_string(rand_t[i], LENGTH_RAND_STR);
         fprintf(op, "%s\n", rand_t[i]);
-        if((curr =icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, 0, &ret_point), errno = 0) != 0 && errno != EBUSY){
+        if((curr =icl_hash_insert(FILES_STORAGE, (void *)rand_t[i], NULL, &ret_point), errno = 0) != 0 && errno != EBUSY){
             fprintf(stderr, "Error fatal in icl_hash_insert\n");
             pthread_exit(NULL);
         }
@@ -250,7 +289,7 @@ START_TEST(test_parse){
         if(ret_point.key) fprintf(vict, "%s\n", (char *)ret_point.key);
         if(i > (int) (TEST % (i+1))/2 && i % 2 == 1){
             char *rand_rem = rand_t[lrand48() % (i+1)];
-            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, &ret_del, 0);
+            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, &ret_del, 0, 0);
             if(res == 1) fprintf(all_deletes, "%s\n", rand_rem);
             else fprintf(not_del, "%s\n", rand_rem);
             if(res == -1 && errno == ETXTBSY) fprintf(fl_sto, "FILE BUSY: %s -------\n", rand_rem);
@@ -306,7 +345,6 @@ START_TEST(test_parse){
                 not_dead++;
                 icl_entry_t *found = icl_hash_find(FILES_STORAGE, curr->file_name);
                 ck_assert_ptr_nonnull(found);
-                ck_assert_ptr_eq(curr->ref, &found->ref);
                 ck_assert_int_eq(curr->group, MY_CACHE->buckets[i]->group);
                 ck_assert_str_eq(curr->me_but_in_store->key, curr->file_name);
                 ck_assert_str_eq(curr->me_but_in_store->me_but_in_cache->file_name, curr->file_name);
@@ -314,7 +352,6 @@ START_TEST(test_parse){
         }
         ck_assert_int_eq(MY_CACHE->buckets[i]->num_dead, dead);
         ck_assert_int_ge(MY_CACHE->buckets[i]->nfiles_row, not_dead);
-        ck_assert_int_eq(MY_CACHE->nfiles, FILES_STORAGE->nentries);
 
     }
     int empty = 0;
@@ -354,6 +391,10 @@ START_TEST(test_parse){
     cach_hash_destroy(MY_CACHE);
     icl_hash_destroy(FILES_STORAGE, NULL, NULL);
     pthread_mutex_destroy(&TO_FREE_LCK);
+    close(ARG_LOG_TH.pipe[WRITE]);
+    ARG_LOG_TH.sign=1;
+    SYSCALL_EXIT(pthread_join, res, pthread_join(th_logger, NULL), "Who would have thought.\n", NULL);
+
 } END_TEST
 
 Suite *parse_suite(void){

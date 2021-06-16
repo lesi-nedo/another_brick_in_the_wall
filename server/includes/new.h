@@ -26,7 +26,7 @@ struct cach_entry_s {
     long int am_dead;
     icl_entry_t *me_but_in_store;
     //importance of item
-    unsigned long int *ref;
+    signed long long int *ref;
     int group;
     char* file_name;
     pthread_mutex_t mutex;

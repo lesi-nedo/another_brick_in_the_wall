@@ -236,6 +236,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
         ht->buckets[hash_val]->me_but_in_cache = NULL;
         ht->buckets[hash_val]->ref = MY_CACHE->incr_entr;
         ht->buckets[hash_val]->time = time(NULL);
+        dprintf(ARG_LOG_TH.pipe[WRITE], "INSERT: %s\n", (char*) ht->buckets[hash_val]->key);
         //!LOCK RELEASED
         UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
         res = cach_hash_insert_bind(MY_CACHE, ht->buckets[hash_val], ret);
@@ -249,6 +250,8 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
         if(data) ht->total_bytes =0;
         if(ht->max_files < ht->nentries) ht->max_files = ht->nentries;
         if(ht->max_bytes < ht->total_bytes) ht->max_bytes = ht->total_bytes;
+        dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_BYTES: %lld\n", ht->max_bytes );
+        dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_FILES: %ld\n", ht->max_files );
         UNLOCK(&ht->stat_lck);
         free(empt_vl);
         return ht->buckets[hash_val];
@@ -268,6 +271,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
                     empt_vl[i]->me_but_in_cache = NULL;
                     empt_vl[i]->ref = MY_CACHE->incr_entr;
                     empt_vl[i]->time = time(NULL);
+                    dprintf(ARG_LOG_TH.pipe[WRITE], "INSERT: %s\n", (char*)  empt_vl[i]->key);
                     //!LOCK RELEASED
                     UNLOCK(&empt_vl[i]->wr_dl_ap_lck);
                     UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
@@ -282,6 +286,8 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
                     if(data) ht->total_bytes =0;
                     if(ht->max_files < ht->nentries) ht->max_files = ht->nentries;
                     if(ht->max_bytes < ht->total_bytes) ht->max_bytes = ht->total_bytes;
+                    dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_BYTES: %lld\n", ht->max_bytes );
+                    dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_FILES: %ld\n", ht->max_files );
                     UNLOCK(&ht->stat_lck);
                     curr=empt_vl[i];
                     free(empt_vl);
@@ -300,7 +306,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
 
     curr->time = time(NULL);
     curr->empty = 0;
-    SYSCALL_RETURN_FREE(pthread_mutex_init, res,  pthread_mutex_init(&(curr->wr_dl_ap_lck), NULL), NULL, curr, "This was not expected, well it is a shame maybe try again.\n", NULL);
+    SYSCALL_RETURN_FREE(pthread_mutex_init, res,  pthread_mutex_init(&(curr->wr_dl_ap_lck), NULL), NULL, curr, "This was not expected, maybe try again.\n", NULL);
     curr->key = key;
     curr->ref= MY_CACHE->incr_entr;
     curr->data = data;
@@ -317,6 +323,7 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
     //add element at the tail
     prev->next = curr;
     curr->prev = prev;
+    dprintf(ARG_LOG_TH.pipe[WRITE], "INSERT: %s\n", (char*)  curr->key);
     //!LOCK RELEASED
     UNLOCK_IFN_RETURN(THIS_IS_A_LCK, NULL);
     res = cach_hash_insert_bind(MY_CACHE, curr, ret);
@@ -329,6 +336,8 @@ icl_hash_insert(icl_hash_t *ht, void* key, void *data, pointers *ret)
         if(data) ht->total_bytes =0;
         if(ht->max_files < ht->nentries) ht->max_files = ht->nentries;
         if(ht->max_bytes < ht->total_bytes) ht->max_bytes = ht->total_bytes;
+        dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_BYTES: %lld\n", ht->max_bytes );
+        dprintf(ARG_LOG_TH.pipe[WRITE], "MAX_FILES: %ld\n", ht->max_files );
     UNLOCK(&ht->stat_lck);
     return curr;
 }

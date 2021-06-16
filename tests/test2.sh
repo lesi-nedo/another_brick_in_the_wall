@@ -36,18 +36,20 @@ fi
 for i in {1..20}; do
     if [[ $(expr $i % 3) -eq 0 ]]; then
         ./main $4 -f $SOCK_NAME -D ../tests/victims -w $DIR_F  &
+        sleep 0.7
         pid+=($!)
     elif [[ $(expr $i % 3) -eq 1 ]]; then
         ./main $4 -f $SOCK_NAME -D ../tests/victims -w $DIR_F2 &
+        sleep 0.7
         pid+=($!)
     elif [[ $(expr $i % 3) -eq  2 ]]; then 
         ./main $4 -f $SOCK_NAME -D ../tests/victims -w $DIR_F3  &
+        sleep 0.7
         pid+=($!)
     fi
 done
 
 cd ..
-sleep 3
 if [[ $1 -eq 1 ]]; then
     kill -s SIGHUP "$SER" > /dev/null 2>&1
     mv ./server/config.txt ./tests/conf2/ > /dev/null 2>&1

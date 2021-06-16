@@ -68,12 +68,9 @@ echo 201 > my_id.txt
 
 
 
-sleep 2
-
-
 if [[ $1 -eq 1 ]]; then
     kill -s SIGHUP ${SER} > /dev/null 2>&1
-    
+    sleep 1
     cd ..
     mv ./server/config.txt ./tests/conf1/ > /dev/null 2>&1
 fi

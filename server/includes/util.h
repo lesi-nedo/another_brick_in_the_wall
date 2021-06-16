@@ -218,10 +218,35 @@ static inline int TRYLOCK(pthread_mutex_t* l) {
   }								    
   return r;	
 }
+#define BCAST_RETURN(c, r)     if (pthread_cond_broadcast(c)!=0)    {		\
+    fprintf(stderr, "ERRORE FATALE broadcast\n");			\
+    return r;						\
+  }
 #define UNLOCK_IFN_RETURN(l,r)    if (pthread_mutex_unlock(l)!=0)      {	\
     fprintf(stderr, "ERRORE FATALE unlock\n");				\
     return r;								\
   }
+
+#define LOCK_IFN_GOTO(l, r)  if (pthread_mutex_lock(l)!=0)        {	\
+    fprintf(stderr, "ERRORE FATALE lock\n");				\
+    goto r;								\
+}
+
+#define UNLOCK_IFN_GOTO(l,r)    if (pthread_mutex_unlock(l)!=0)      {	\
+    fprintf(stderr, "ERRORE FATALE unlock\n");				\
+    goto r;								\
+  }
+
+#define SIGNAL_IFN_GOTO(c, r, res)    if ((res = pthread_cond_signal(c))!=0)       {	\
+    fprintf(stderr, "ERRORE FATALE signal\n");			\
+    goto r;					\
+}
+
+#define BCAST_IFN_GOTO(c, r)     if (pthread_cond_broadcast(c)!=0)    {		\
+    fprintf(stderr, "ERRORE FATALE broadcast\n");			\
+    goto r;						\
+  }
+
 
 static inline int TRYLOCK_TIMEOUT(pthread_mutex_t* l, struct timespec *timeout) {
   int r=0;		

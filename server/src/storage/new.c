@@ -266,13 +266,13 @@ int _find_dead_helper(cach_hash_t *ht, int index){
     return -1;
 }
 /**
- * @brief: I almost went nuts because of this function.
+ * @brief:
 My idea is each threads start from position one, variable temp holds the file to be insert, check the first row for empty spots but if there are already 
 threads looking and empty rows are less than the number of threads currently presents in the level than it passes one level below. If it finds an empty spots tries to get the lock for writing the pointer in cache, and waits 
 for the lock associated at each file in store to update pointers. So if a thread finds a pointer that should not be there because it was referenced more than the level has the range or less than it tries to get the lock and 
 replaces with the fresh one, the "victim" will be placed in the correct position but if the level is full in which it belongs than the thread tries to find the closest to the correct level.
 It might happened that a thread holds a variable already dead than it releases the locks and frees the memory.
-I can guarantee(at least I hope so) that the values in cache and in files are correct, i.e each pointers are correct (tested with 100 threads running for "long time"), and there are no deadlocks relative to the part of cache and store.
+I can guarantee(at least I hope so) that the values in cache and in files are correct, i.e each pointers are correct , and there are no deadlocks relative to the part of cache and store.
  * @param curr -- starting point from which will be searched
  * @param temp -- temporary entries to hold all variables information to be insert into cache
  * @return -- 0 success
@@ -293,7 +293,7 @@ int
     while(curr != NULL){
         if(curr->am_dead){
             //JUMPS TO THE END BECAUSE WE NEED TO DELETE TEMP
-            if(TRYLOCK(&curr->mutex) == 0){
+            if(TRYLOCK(&(curr->mutex)) == 0){
                 //!LOCK ACQUIRED
                 if(curr->am_dead){
                     pthread_mutex_t *UNLOCK_ME = &file_in->wr_dl_ap_lck;
@@ -310,7 +310,7 @@ int
                         ht->buckets[index]->num_dead--;
                         //!LOCK RELEASED if am_dead == 1
                         MY_CACHE->buckets[index]->threads_in--;
-                        UNLOCK(&curr->mutex);
+                        UNLOCK(&(curr->mutex));
                         UNLOCK(UNLOCK_ME);
                         free(temp);
                         return 0;
@@ -677,11 +677,8 @@ cach_hash_dump(FILE* stream, cach_hash_t* ht)
 int
 _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_t *ht, int index, cach_entry_t *repl){
     while(curr != NULL){
-        if((!curr->am_dead && !curr->me_but_in_store->am_being_used)){
+        if((!curr->am_dead && curr->me_but_in_store->am_being_used <= 0)){
             if(TRYLOCK(&curr->mutex) == 0){
-                #ifdef DEBUG
-                assert(curr->me_but_in_store->am_being_used >= 0);
-                #endif // DEBUG
                 //!LOCK ACQUIRED
                 if(!curr->am_dead){
                     pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
@@ -691,16 +688,16 @@ _helper_find_vic(cach_entry_t *curr, int tail_or_head, pointers *ret, cach_hash_
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
-                        if(curr->file_name!=NULL){ 
-                            dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
-                            dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
-
-                        }
                         ret->data = curr->me_but_in_store->data;
                         ret->size_data = curr->me_but_in_store->ptr_tail+1;
                         while(ret->size_data == 0 && curr->me_but_in_store->ptr_tail > 0) ret->size_data=curr->me_but_in_store->ptr_tail+1;
                         while(!ret->data && curr->me_but_in_store->data) ret->data =curr->me_but_in_store->data;
                         while(!ret->key && curr->me_but_in_store->key) ret->key =curr->me_but_in_store->key;
+                        if(curr->file_name!=NULL){ 
+                            dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
+                            dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
+
+                        }
                         curr->me_but_in_store->data = NULL;
                         curr->me_but_in_store->key = NULL;
                         LOCK(&FILES_STORAGE->stat_lck);
@@ -770,9 +767,6 @@ _helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cac
     while(curr != NULL){
         if(!curr->am_dead && curr->me_but_in_store && curr->me_but_in_store->am_being_used<=0){
             if(TRYLOCK(&curr->mutex) == 0){
-                 #ifdef DEBUG
-                assert(curr->me_but_in_store->am_being_used >= 0);
-                #endif // DEBUG
                 //!LOCK ACQUIRED
                 if(!curr->am_dead){
                     pthread_mutex_t *THIS_IS_LCK = &curr->me_but_in_store->wr_dl_ap_lck;
@@ -801,13 +795,13 @@ _helper_find_vic_no_rep(cach_entry_t *curr, int tail_or_head, pointers *ret, cac
                         curr->me_but_in_store->empty = 1;
                         ret->been_modified = curr->me_but_in_store->been_modified;
                         ret->key = curr->me_but_in_store->key;
-                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
-                        dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
                         ret->data = curr->me_but_in_store->data;
                         ret->size_data = curr->me_but_in_store->ptr_tail+1;
                         while(ret->size_data == 0 && curr->me_but_in_store->ptr_tail > 0) ret->size_data=curr->me_but_in_store->ptr_tail+1;
                         while(!ret->data && curr->me_but_in_store->data) ret->data =curr->me_but_in_store->data;
                         while(!ret->key && curr->me_but_in_store->key) ret->key =curr->me_but_in_store->key;
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "VICTIM: %s BEEN MODIFIED: %d\n", (char*)ret->key, curr->me_but_in_store->been_modified);
+                        dprintf(ARG_LOG_TH.pipe[WRITE], "OUT: %lld\n", ret->size_data);
                         curr->me_but_in_store->data = NULL;
                         curr->me_but_in_store->key = NULL;
                         assert(ret->size_data);

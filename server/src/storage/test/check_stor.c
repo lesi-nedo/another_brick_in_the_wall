@@ -119,6 +119,7 @@ void* isrt_rand(void *args_th){
     int res = 2;
     //SIGNAL MASK
     sigset_t mask, old_m;
+    volatile sig_atomic_t test =0;
     sigemptyset(&mask);
     sigaddset(&mask, SIGQUIT);
     SYSCALL_EXIT(sigprocmask, res,  sigprocmask(SIG_BLOCK, &mask, &old_m), "Nothing to do here, I'm out, \033[1;31mBye.\033[0;37m\n", NULL);
@@ -154,7 +155,7 @@ void* isrt_rand(void *args_th){
             char *rand_str_del = rand_t[get_rand() % (i+1)];
             // sleep(rand_sleep);
             errno = 0;
-            res = icl_hash_delete_ext(args->stor, rand_str_del, &ret,0, 0);
+            res = icl_hash_delete_ext(args->stor, rand_str_del, &ret,0, &test);
             if(res == 1) fprintf(args->all_deletes, "%s\n", rand_str_del);
             else fprintf(args->not_del, "%s\n", rand_str_del);
             // rand_sleep = get_rand() % MOD_SLEEP;
@@ -211,6 +212,7 @@ void* isrt_rand(void *args_th){
 
 START_TEST(test_parse){
     int res = 0;
+    volatile sig_atomic_t test =0;
     int SIZE_M = EXTRA+TEST < 0 ? TEST: EXTRA+TEST;
     struct Cache_settings sett;
     sett.NUM_GROUP = NUM_GROUP_M;
@@ -289,7 +291,7 @@ START_TEST(test_parse){
         if(ret_point.key) fprintf(vict, "%s\n", (char *)ret_point.key);
         if(i > (int) (TEST % (i+1))/2 && i % 2 == 1){
             char *rand_rem = rand_t[lrand48() % (i+1)];
-            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, &ret_del, 0, 0);
+            res = icl_hash_delete_ext(FILES_STORAGE, rand_rem, &ret_del, 0, &test);
             if(res == 1) fprintf(all_deletes, "%s\n", rand_rem);
             else fprintf(not_del, "%s\n", rand_rem);
             if(res == -1 && errno == ETXTBSY) fprintf(fl_sto, "FILE BUSY: %s -------\n", rand_rem);

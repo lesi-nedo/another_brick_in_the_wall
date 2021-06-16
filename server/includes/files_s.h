@@ -23,7 +23,7 @@ struct icl_entry_s {
     unsigned long int empty;
     void* key;
     void *data;
-    unsigned long int ref;
+    signed long long int ref;
     int been_modified;
     signed long long int OWNER;
     int O_LOCK;

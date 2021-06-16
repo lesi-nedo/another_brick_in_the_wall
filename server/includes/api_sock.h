@@ -10,9 +10,8 @@
 #define IS_ERROR 1
 #define IS_EMPTY 2
 #define MAX_LOG 64
-#define MAX_FDS 16*1024
-#define SENDBUFF_SIZE 1024
-#define RECEIVEBUFF_SIZE 1024
+#define MAX_FDS 2*1024
+#define SENDBUFF_SIZE 256
 #define OPEN_F_L 0
 #define OPEN_F_C 1
 #define OPEN_F_L_C 2

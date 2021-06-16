@@ -89,11 +89,16 @@ int main (int argc, char **argv){
     int total_con = 0;
     int listener_fd = 0;;
     int ep_fd = 0;
-    Threads_w my_bi;
+    Threads_w my_thr_arg;
     struct epoll_event *events = NULL;
     struct epoll_event accept_event={0};
     struct epoll_event pipe_event={0};
 
+    events = (struct epoll_event *) calloc(MAX_FDS, sizeof(struct epoll_event));
+    if(events==NULL){
+        res = errno;
+        goto THATS_ALL_FOLKS;
+    }
 
     //Ignoring EPIPE for all threads and masking all signals
     sigset_t set, old_m;
@@ -126,14 +131,16 @@ int main (int argc, char **argv){
     if(FILES_STORAGE == NULL || MY_CACHE == NULL){
         exit(EXIT_FAILURE);
     }
+    //Initializing variables with the setting from the file
     FILES_STORAGE->MAX_SPACE_AVAILABLE= cach_set.SPACE_AVAILABLE;
-    my_bi.num_thr = all_settings[hash(available_settings[2])%BASE_MOD%num_avail_settings].value;
-    my_bi.time_to_quit = &sig_teller;
-    my_bi.STORE = FILES_STORAGE;
-    my_bi.CACHE = MY_CACHE;
+    my_thr_arg.num_thr = all_settings[hash(available_settings[2])%BASE_MOD%num_avail_settings].value;
+    my_thr_arg.time_to_quit = &sig_teller;
+    my_thr_arg.STORE = FILES_STORAGE;
+    my_thr_arg.CACHE = MY_CACHE;
     SOCK_NAME = all_settings[hash(available_settings[3])%BASE_MOD%num_avail_settings].value_string;
     unlink(SOCK_NAME);
     listener_fd = ini_sock(SOCK_NAME);
+    //making a socket non blocking
     res = non_blocking(listener_fd);
     if(res == -1 || listener_fd == -1){
         goto THATS_ALL_FOLKS;
@@ -152,49 +159,40 @@ int main (int argc, char **argv){
     if((res = pthread_sigmask(SIG_SETMASK, &old_m, NULL)) != 0){
         goto THATS_ALL_FOLKS;
     }
-   
+   //Initializing variables for the log thread
+
     ARG_LOG_TH.sign = 0;
     ARG_LOG_TH.file_name = all_settings[hash((unsigned char *)"LOG_FILE_NAME")%BASE_MOD%num_avail_settings].value_string;
-    if(pipe(ARG_LOG_TH.pipe) == -1 || pipe2(my_bi.pipe_ready_fd, O_NONBLOCK) == -1 || pipe2(my_bi.pipe_done_fd, O_NONBLOCK)){
+    if(pipe(ARG_LOG_TH.pipe) == -1 || pipe2(my_thr_arg.pipe_done_fd, O_NONBLOCK)){
         res = errno;
         goto THATS_ALL_FOLKS;
     }
-    pipe_event.data.fd = my_bi.pipe_done_fd[READ];
+    pipe_event.data.fd = my_thr_arg.pipe_done_fd[READ];
     pipe_event.events = EPOLLIN;
-    if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, my_bi.pipe_done_fd[READ], &pipe_event) < 0){
+    //Adding pipe fd to the pool of fd to be wait upon, This pipe is used to write into it ready fd.
+    if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, my_thr_arg.pipe_done_fd[READ], &pipe_event) < 0){
         goto THATS_ALL_FOLKS;
     }
     pthread_t th_logger = 0;
     //Creates a thread to manage all logs
     //if there are no readers and pipe is open dprinf gets stuck.
-    //or buff gets full //!BE CAREFUL
     if((res=pthread_create(&th_logger, NULL, &log_to_file, (void *)&ARG_LOG_TH)) != 0){
         goto THATS_ALL_FOLKS;
     }
-    res = create_them(&my_bi);
+    //creates a pool of workers
+    res = create_them(&my_thr_arg);
     if(res == -1){
         goto THATS_ALL_FOLKS;
     }
-    events = (struct epoll_event *) calloc(MAX_FDS, sizeof(struct epoll_event));
-    if(events==NULL){
-        res = errno;
-        goto THATS_ALL_FOLKS;
-    }
+    //The system keeps track of all active fd so when the signal SIGHUP arrives it waits until total_con gets <= then it exists and sets sig_teller to 1 than all workers will exit softly.
     while(sig_teller != 1 && ( sig_teller==0 || (sig_teller== 2 && total_con > 0))){
-        //THESE PRINTS MAKES MY CODE REALLY SLOW AND DELAY SIGNAL
-        // I DON'T KNOW WHY
-        // printf("\033[1;31mWAITING    \033[0;37m\033[s\n");
-        // printf("\033[1A");
         int nready = epoll_wait(ep_fd, events, MAX_FDS, -1);
         for(int i =0; i < nready; i++){
-            // printf("\033[1;%dmI'M RUNNING\033[0;37m\033[s\n", color);
-            // printf("\033[1A");
             color = color ==35? 36 : 35;
             int new_sc = 0;
             if((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) ||
             !(events[i].events & EPOLLIN)){
                 dprintf(ARG_LOG_TH.pipe[WRITE], "CLOSED: %d\n", events[i].data.fd);
-                // print_error("Hi sweetie, I just want to let you know that epoll_wait failed on a file descriptor. <3 \n", NULL);
                 total_con--;
                 if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) <0){
                     res = errno;
@@ -206,7 +204,7 @@ int main (int argc, char **argv){
             if(events[i].data.fd == listener_fd){
                 if((new_sc =accept(listener_fd, (struct sockaddr*)NULL, NULL)) < 0){
                     if(errno != EAGAIN || errno != EWOULDBLOCK){
-                        print_error("With a broken heart I have to tell I have failed you, goodbye\n", NULL);
+                        print_error("I have failed\nerrno:%s", strerror(errno));
                         res = errno;
                         goto THATS_ALL_FOLKS;
                     }
@@ -216,7 +214,7 @@ int main (int argc, char **argv){
                     continue;
                 }
                 if(new_sc > MAX_FDS){
-                    print_error("I can't no more honey. Did not add the new one.\n", NULL);
+                    print_error("Did not add the new one.\nerrno:%s\n", strerror(errno));
                     continue;
                 }
                 non_blocking(new_sc);
@@ -225,40 +223,45 @@ int main (int argc, char **argv){
                 event.data.fd = new_sc;
                 event.events = EPOLLIN;
                 total_con++;
+                dprintf(ARG_LOG_TH.pipe[WRITE], "NUM_ACTIVE:%d\n", total_con);
                 if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, new_sc, &event) < 0){
-                    print_error("Nothing personal it's just business.\n", NULL);
+                    print_error("epoll_ctl.\nerrno:%s\n", strerror(errno));
                     res = errno;
                     goto THATS_ALL_FOLKS;
                 }
-            } else if(events[i].data.fd == my_bi.pipe_done_fd[READ]){
+            } else if(events[i].data.fd == my_thr_arg.pipe_done_fd[READ]){
                 int to_add_fd = 0;
                 int n =0;
-                while((n = read(my_bi.pipe_done_fd[READ], &to_add_fd, sizeof(int)))>0){
+                while((n = read(my_thr_arg.pipe_done_fd[READ], &to_add_fd, sizeof(int)))>0){
                     struct epoll_event event = {0};
                     event.data.fd = to_add_fd;
                     event.events = EPOLLIN;
                     if(epoll_ctl(ep_fd, EPOLL_CTL_ADD, to_add_fd, &event) < 0){
-                        print_error("Hey dandy, don't be mad but I ran into a problem.\nerrno: %s\n", strerror(errno));
+                        print_error("I ran into a problem.\nerrno: %s\n", strerror(errno));
                         res = errno;
                         goto THATS_ALL_FOLKS;
                     }
                 }
                 if(n < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
-                    print_error("Hasta luego, loco\n", NULL);
+                    print_error("read\nerrno: %s\n", strerror(errno));
                     res = errno;
                     goto THATS_ALL_FOLKS;
                 }
             } else{
-                res =writen(my_bi.pipe_ready_fd[WRITE], &events[i].data.fd, sizeof(events[i].data.fd), &sig_teller);
-                if(res < 0){
-                    print_error("Our path ends here, have a nice life.\nerrno: %s\n",strerror(errno));
-                    res = errno;
-                    goto THATS_ALL_FOLKS;
+                while(my_thr_arg.tail_fds >= (my_thr_arg.size_fds-2) && sig_teller == 0){
+                     sched_yield();
                 }
+                //!LOCK ACQUIRED
+                LOCK_IFN_GOTO(&(my_thr_arg.LOCK_FD), THATS_ALL_FOLKS);
+                my_thr_arg.fds[my_thr_arg.tail_fds++]=events[i].data.fd;
                 if(epoll_ctl(ep_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) < 0){
                     res = errno;
+                    UNLOCK_IFN_GOTO(&(my_thr_arg.LOCK_FD), THATS_ALL_FOLKS);
                     goto THATS_ALL_FOLKS;
                 }
+                SIGNAL_IFN_GOTO(&(my_thr_arg.cond), THATS_ALL_FOLKS, errno);
+                //!LOCK RELEASED
+                UNLOCK_IFN_GOTO(&(my_thr_arg.LOCK_FD), THATS_ALL_FOLKS);
             }
         }
         if(errno != EINTR && nready == -1){
@@ -272,7 +275,7 @@ THATS_ALL_FOLKS:
     sched_yield();
     ARG_LOG_TH.sign = 1;
     close(ARG_LOG_TH.pipe[WRITE]);
-    kill_those_bi(&my_bi);
+    kill_them(&my_thr_arg);
     char path_logs[] ={"../logs"};
     res = chdir(path_logs);
     if(res < 0){
@@ -305,6 +308,6 @@ THATS_ALL_FOLKS:
                 free(all_settings[i].value_string);
             }
     }
-    print_error("Have a wonderful day, sir. Error: %s\n", strerror(res));
+    print_error("Bye. Error: %s\n", strerror(res));
     return errno;
 }
